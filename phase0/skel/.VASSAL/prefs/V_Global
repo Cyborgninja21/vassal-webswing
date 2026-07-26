@@ -1,0 +1,4 @@
+#Seeded by vassal-webswing skel (Phase 0)
+Locale=en
+ServerAddressBook=description\=Private Server|nodeHost\=vassal-lobby|nodePort\=5050|type\=private,description\=VASSAL Server|type\=official
+welcomeWizard=false

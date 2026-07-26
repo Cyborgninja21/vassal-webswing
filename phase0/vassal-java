@@ -1,0 +1,19 @@
+#!/bin/sh
+# Per-session JVM wrapper: Webswing invokes this as jreExecutable for every
+# Player launch. Seeds a fresh user's home from the skeleton exactly once
+# (never overwrites an existing home), then execs the real java.
+SKEL=/opt/vassal/skel
+
+home=""
+for arg in "$@"; do
+  case "$arg" in
+    -Duser.home=*) home="${arg#-Duser.home=}" ;;
+  esac
+done
+
+if [ -n "$home" ] && [ ! -d "$home/.VASSAL" ]; then
+  mkdir -p "$home"
+  cp -r "$SKEL/.VASSAL" "$home/.VASSAL"
+fi
+
+exec /opt/java/openjdk/bin/java "$@"
