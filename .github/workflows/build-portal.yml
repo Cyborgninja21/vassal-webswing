@@ -1,0 +1,46 @@
+name: build-portal
+
+# The portal is a separate image from the Webswing server image, so it gets its
+# own workflow scoped to portal/** — a catalog tweak must not rebuild the ~2 GB
+# Webswing/VASSAL image, and a module change must not rebuild the portal.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "portal/**"
+      - ".github/workflows/build-portal.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: set-up-buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: login-ghcr
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: build-and-push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./portal
+          file: ./portal/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/cyborgninja21/vassal-portal:latest
+            ghcr.io/cyborgninja21/vassal-portal:${{ github.sha }}
+          cache-from: type=gha,scope=portal
+          cache-to: type=gha,mode=max,scope=portal

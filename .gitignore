@@ -1,0 +1,9 @@
+portal/node_modules/
+portal/.next/
+portal/out/
+portal/build/
+*.tsbuildinfo
+portal/next-env.d.ts
+.env
+.env.local
+.DS_Store

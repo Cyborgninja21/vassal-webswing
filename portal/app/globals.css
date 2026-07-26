@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* System stack on purpose: no webfont fetch, so the page renders identically
+     with the container offline and needs no CSP exception. */
+  --font-display: Georgia, "Iowan Old Style", "Palatino Linotype", "Liberation Serif",
+    "DejaVu Serif", "Times New Roman", serif;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background-color: #0b0d10;
+  /* Felt weave: two offset radial washes over the base, no image asset. */
+  background-image:
+    radial-gradient(ellipse 80% 60% at 15% -10%, rgba(120, 70, 40, 0.10), transparent 60%),
+    radial-gradient(ellipse 70% 50% at 90% 0%, rgba(40, 70, 120, 0.10), transparent 60%);
+  background-attachment: fixed;
+  color: #d8cfbd;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Hairline plate edge shared by cards and tiles. */
+.plate {
+  border: 1px solid rgba(201, 162, 77, 0.18);
+  background: linear-gradient(180deg, rgba(26, 31, 38, 0.9), rgba(18, 21, 26, 0.9));
+}
+
+.plate-hover {
+  transition: border-color 150ms ease, transform 150ms ease, box-shadow 150ms ease;
+}
+
+.plate-hover:hover {
+  border-color: rgba(201, 162, 77, 0.45);
+  transform: translateY(-2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plate-hover {
+    transition: none;
+  }
+  .plate-hover:hover {
+    transform: none;
+  }
+}
