@@ -97,6 +97,9 @@ COPY --from=build --chown=webswing:webswing /opt/vassal/modules /opt/vassal/modu
 
 COPY --chown=webswing:webswing docker/webswing.config docker/jetty.properties /opt/webswing/
 COPY --chown=webswing:webswing docker/entrypoint.sh /opt/webswing/entrypoint.sh
+# Module tiles for the app-selection dialog (SecuredPathConfig.icon, 256x256).
+# Regenerate with tools/make-icons.py.
+COPY --chown=webswing:webswing docker/icons /opt/webswing/icons
 COPY --chown=webswing:webswing phase0/skel /opt/vassal/skel
 COPY --chown=webswing:webswing phase0/vassal-java /opt/vassal/bin/vassal-java
 
