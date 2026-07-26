@@ -6,7 +6,13 @@ VASSAL install, no module download — using
 as the delivery layer. One hosted container spawns one `VASSAL.launch.Player` JVM per
 connected player and streams Java2D draw commands to an HTML5 canvas over WebSocket.
 
-**Status: Phase 0 + Phase 1 — PASSED 2026-07-26.**
+**Status: Phases 0–2 — SHIPPED 2026-07-26.** The platform is LIVE at its internal
+homelab URL: Traefik + Authentik forward-auth feed the `X-Forwarded-User` realm
+(`src/`), the production image (`docker/`) is built by CI to
+`ghcr.io/cyborgninja21/vassal-webswing`, and the two-container stack (webswing +
+lobby sidecar) runs under Komodo. Verified end-to-end: anonymous requests 302 to
+the IdP; an authenticated user gets a per-identity Player JVM with a
+skel-seeded home; reconnect lands back on the live JVM.
 
 *Phase 0 (single-client compatibility):* VASSAL 3.7.24 + Webswing Lite 26.4.5 render and
 play correctly in the browser — map scroll/zoom, piece drag-and-drop, right-click module
