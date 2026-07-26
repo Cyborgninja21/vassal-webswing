@@ -1,0 +1,43 @@
+# Phase 1 — multiplayer topology (validated 2026-07-26).
+#
+# One webswing container (one URL, one image) spawns one VASSAL Player JVM per
+# connected browser session; the per-player JVMs interconnect through VASSAL's
+# own in-jar lobby server running as a sidecar on the same network. Zero engine
+# changes — this is VASSAL's native private-server multiplayer.
+#
+# This is the SCRATCH shape used for Phase 1 bring-up. Production (Phase 2) wraps
+# the same two services in a Komodo stack with Traefik + chain-authentik, an
+# X-Forwarded-User Shiro realm, and named volumes under PBS backup scope.
+services:
+  webswing:
+    image: vassal-webswing:phase1          # built from ../phase0/Dockerfile
+    networks: [vassal-net]
+    ports:
+      - "8080:8080"                        # scratch only; Phase 2 fronts with Traefik, no published port
+    volumes:
+      - vassal-users:/data/users           # per-player homeDir + prefs + saves (seeded from skel)
+      - vassal-transfers:/data/transfers   # browser upload/download staging
+    # webswing.config points every module's V_Global at vassal-lobby:5050 via the skel
+
+  vassal-lobby:
+    image: vassal-webswing:phase1          # same image, different entrypoint
+    networks: [vassal-net]                 # never leaves the stack network — no published port
+    # VASSAL's in-jar private lobby server (shipped in Vengine.jar). Rooms = tables;
+    # a mid-game joiner receives the full game snapshot via replay.
+    entrypoint:
+      - /opt/java/openjdk/bin/java
+      - -cp
+      - /opt/vassal/lib/Vengine.jar
+      - VASSAL.chat.node.Server
+      - -port
+      - "5050"
+      - -URL
+      - "null"
+
+networks:
+  vassal-net:
+    driver: bridge
+
+volumes:
+  vassal-users:
+  vassal-transfers:

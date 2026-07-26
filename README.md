@@ -6,15 +6,24 @@ VASSAL install, no module download — using
 as the delivery layer. One hosted container spawns one `VASSAL.launch.Player` JVM per
 connected player and streams Java2D draw commands to an HTML5 canvas over WebSocket.
 
-**Status: Phase 0 (bring-up & compatibility shakeout) — PASSED 2026-07-26.**
-VASSAL 3.7.24 + Webswing Lite 26.4.5 render and play correctly in the browser:
-map scroll/zoom, piece drag-and-drop, right-click module commands, keyboard,
-multi-window (card displays, chat), save/load through the browser file bridge,
-drop/reconnect into the live session (`CONTINUE_FOR_USER`), and concurrent users
-with isolated per-user homes. Nobody had published prior art for this pairing.
+**Status: Phase 0 + Phase 1 — PASSED 2026-07-26.**
+
+*Phase 0 (single-client compatibility):* VASSAL 3.7.24 + Webswing Lite 26.4.5 render and
+play correctly in the browser — map scroll/zoom, piece drag-and-drop, right-click module
+commands, keyboard, multi-window (card displays, chat), save/load through the browser file
+bridge, drop/reconnect into the live session (`CONTINUE_FOR_USER`), concurrent users with
+isolated per-user homes.
+
+*Phase 1 (multiplayer):* two browser seats play one Here I Stand game through VASSAL's own
+in-jar lobby server running as a `vassal-lobby` sidecar (`phase1/docker-compose.yaml`) —
+piece moves, dice rolls, and chat all propagate both directions; a third session joins
+mid-game and receives the full board via snapshot replay; a reconnecting player lands back
+on their live seat with full history; `allowStealSession: false` blocks a concurrent
+second login; and two different modules (Here I Stand + Twilight Struggle) run
+simultaneously in separate JVMs. Nobody had published prior art for this pairing.
 
 This repo will become the full Webswing Lite fork (Phase 2: `X-Forwarded-User`
-Shiro realm, CI → ghcr image). For now it carries the validated Phase 0
+Shiro realm, CI → ghcr image). For now it carries the validated Phase 0 + Phase 1
 artifacts, which are the Phase 2 starting point.
 
 ## Layout
@@ -26,7 +35,9 @@ artifacts, which are the Phase 2 starting point.
 | `phase0/entrypoint.sh` | Foreground server launcher (the shipped `run.sh` daemonizes — not container-suited). |
 | `phase0/vassal-java` | Per-session `jreExecutable` wrapper: seeds a fresh user's home from `skel/` exactly once, then execs the real `java`. |
 | `phase0/skel/.VASSAL/prefs/V_Global` | Seeded prefs: welcome wizard off, private lobby (`vassal-lobby:5050`) in the `ServerAddressBook`. |
-| `phase0/tools/cdp.py` | Headless-Chromium CDP driver used to exercise the compatibility checklist. |
+| `phase0/tools/cdp.py` | Headless-Chromium CDP driver used to exercise the compatibility + multiplayer checklists. |
+| `phase1/docker-compose.yaml` | Two-container multiplayer topology: `webswing` + `vassal-lobby` sidecar on one network. |
+| `phase1/webswing.config` | Phase 0 config + `swingSessionTimeout: 14400` (4h) and `timeoutIfInactive: false` — see Phase 1 findings. |
 | `patches/AudioClip.java` | Toolkit fix: `AudioClip.getFormat()` returned `null`, violating the `DataLine` contract and crashing VASSAL at module init (NPE in `AudioSystem.getAudioInputStream`). Patched to track the open format and default to CD-PCM. Compiled against `webswing-app-toolkit-26.4.5.jar` and spliced into the war for Phase 0; proper home is this fork's source tree (Phase 2). |
 
 ## Phase 0 findings (the punch list, closed)
@@ -57,6 +68,34 @@ artifacts, which are the Phase 2 starting point.
 8. **Image pre-tiling is per-module.** Here I Stand 500th (3.5.0) never fires the
    VASSAL tiler; treat pre-tiling as a module-onboarding check, not a universal
    build step.
+
+## Phase 1 findings (multiplayer)
+
+1. **The seeded lobby pointer works end to end.** The skel `V_Global` gives each fresh
+   user a `Private Server [vassal-lobby:5050]` entry in VASSAL's Server Controls
+   (right-click the connect button → change server). VASSAL merges it cleanly into the
+   default `ServerAddressBook`; select it, connect, and you're in the private lobby's
+   Main Room — never `vassalengine.org`.
+2. **Native VASSAL multiplayer needs zero Webswing awareness.** The lobby is just a JVM
+   running `VASSAL.chat.node.Server -port 5050 -URL null` from the same `Vengine.jar`;
+   the per-player Player JVMs talk to it over the plain docker network. Draw-command
+   streaming (Webswing) and game-state sync (VASSAL) are fully orthogonal.
+3. **Reconnect holds the seat AND the lobby membership.** Closing the browser and logging
+   back in as the same Webswing user reconnects to the live Player JVM, which never left
+   its game room — faction, chat history, and board state are all intact. The Player JVM
+   count does not change across a browser drop.
+4. **`allowStealSession: false` is the right anti-hijack default.** A concurrent second
+   login as the same Webswing user is refused with "There is already a session in progress
+   in another window" (Reconnect / Sign out only) — no silent takeover.
+5. **Session timeout governs the abandoned-JVM reap.** `swingSessionTimeout` (seconds,
+   default 300) is how long a disconnected Player JVM survives before Webswing reaps it.
+   Each seated player is a ~700 MB JVM, so the default 5 min is too aggressive for
+   board games. Set to **14400 s (4 h)** with `timeoutIfInactive: false` so a dinner
+   break (or a whole evening's AFK) survives while genuinely abandoned games still free
+   their memory. Verified: JVM survives a short disconnect and reaps after the timeout.
+6. **The per-app JVM model composes across modules.** Here I Stand and Twilight Struggle
+   ran simultaneously as separate Player JVMs from the one Webswing server — one app entry
+   per module, no cross-talk.
 
 ## License
 
