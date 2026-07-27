@@ -1,14 +1,17 @@
 import Link from "next/link";
 import { currentIdentity } from "@/lib/identity";
-import { OperatorConsole } from "@/components/operator-console";
+import { ModuleManager } from "@/components/module-manager";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Operator controls. Everything here rides the one admin-console WebSocket the
- * portal already holds — Webswing has no session REST API.
+ * Module administration.
+ *
+ * Operators only — and not merely because the UI is hidden: every route behind
+ * it re-checks the group server-side. Publishing a module means running its
+ * code in the container, so this is the one control the whole design leans on.
  */
-export default async function Admin() {
+export default async function AdminModules() {
   const identity = await currentIdentity();
   if (!identity?.isAdmin) {
     return (
@@ -27,23 +30,16 @@ export default async function Admin() {
   return (
     <main className="mx-auto max-w-4xl px-6 py-10">
       <header className="border-b border-brass-400/20 pb-5">
-        <Link href="/" className="text-xs text-brass-400 underline-offset-4 hover:underline">
-          ← back to the portal
+        <Link href="/admin" className="text-xs text-brass-400 underline-offset-4 hover:underline">
+          ← operator console
         </Link>
-        <h1 className="mt-2 font-display text-3xl text-parchment-100">Operator console</h1>
+        <h1 className="mt-2 font-display text-3xl text-parchment-100">Modules</h1>
         <p className="mt-1 text-sm text-parchment-500">
-          Live Player JVMs and capacity headroom, straight from Webswing.
+          Add a game from a ZIP. It is validated, hashed and published without a restart or a
+          redeploy.
         </p>
-        <nav className="mt-3">
-          <Link
-            href="/admin/modules"
-            className="text-sm text-brass-400 underline-offset-4 hover:underline"
-          >
-            manage modules →
-          </Link>
-        </nav>
       </header>
-      <OperatorConsole />
+      <ModuleManager />
     </main>
   );
 }

@@ -414,20 +414,13 @@ function CatalogGrid({
               <p className="mt-3 flex-1 text-sm leading-relaxed text-parchment-300/90">
                 {mod.description}
               </p>
-              <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-parchment-500">
-                <div className="contents">
-                  <dt className="sr-only">Players</dt>
-                  <dd>{mod.players} players</dd>
-                  <dt className="sr-only">Era</dt>
-                  <dd>{mod.era}</dd>
-                </div>
-                <div className="contents">
-                  <dt className="sr-only">Play time</dt>
-                  <dd>{mod.playTime}</dd>
-                  <dt className="sr-only">Designer</dt>
-                  <dd className="truncate">{mod.designer}</dd>
-                </div>
-              </dl>
+              <ul className="mt-4 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-parchment-500">
+                {mod.facts.map((fact) => (
+                  <li key={fact} className="truncate">
+                    {fact}
+                  </li>
+                ))}
+              </ul>
               <p className="mt-4 flex items-center gap-2 text-xs">
                 <Dot ok={mod.activeUsers.length > 0} />
                 <span className={mod.activeUsers.length ? "text-parchment-300" : "text-parchment-500"}>

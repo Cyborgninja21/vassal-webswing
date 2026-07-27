@@ -4,7 +4,7 @@ import protobuf from "protobufjs";
 import { SignJWT } from "jose";
 import WebSocket from "ws";
 import { env } from "@/lib/env";
-import { CATALOG } from "@/lib/catalog";
+import { allModules } from "@/lib/catalog";
 
 /**
  * Client for Webswing's admin-console channel.
@@ -65,6 +65,8 @@ class AdminConsoleClient {
   private started = false;
   private byPath = new Map<string, WebswingSession[]>();
   private listeners = new Set<Listener>();
+  /** correlationId → resolver, for the request/response half of saveConfig. */
+  private pendingSaves = new Map<string, (r: { ok: boolean; error: string | null }) => void>();
 
   private state: AdminConsoleState = {
     sessions: null,
@@ -184,9 +186,85 @@ class AdminConsoleClient {
    * rather than relying on the semantics of an absent path.
    */
   private poll(): void {
-    for (const mod of CATALOG) {
+    for (const mod of allModules()) {
       this.send({ getSwingSessions: { path: mod.path, correlationId: mod.path } });
     }
+  }
+
+  /**
+   * Publish (or re-publish) an application path.
+   *
+   * Webswing's own config file is the durable record; this asks Webswing to
+   * write it rather than writing it ourselves, because the server holds the
+   * write `synchronized` and reloads inline afterwards. Writing the file from
+   * outside would race the 1 s config poller and could be read half-written.
+   *
+   * `createConfig` deliberately materialises the entry `enabled:false` first so
+   * a half-built app never initialises; the save that follows carries the real
+   * configuration, `enabled` included.
+   */
+  async publishApp(
+    path: string,
+    config: Record<string, unknown>,
+    opts: { create?: boolean } = {},
+  ): Promise<{ ok: boolean; error: string | null }> {
+    if (this.ws?.readyState !== WebSocket.OPEN) {
+      return { ok: false, error: "The Webswing admin channel is not connected." };
+    }
+    if (opts.create !== false) {
+      this.send({ createApp: { path } });
+      // createConfig writes, then re-reads through the same provider; give the
+      // server a beat to settle before overwriting what it just created.
+      await new Promise((r) => setTimeout(r, 250));
+    }
+
+    const correlationId = randomUUID();
+    const result = this.awaitSaveResult(correlationId);
+    this.send({
+      saveConfig: {
+        path,
+        // GlobalUrlHandler.saveConfig unwraps a top-level `data` object.
+        serverConfig: Buffer.from(JSON.stringify({ data: config }), "utf8"),
+        saveAppConfigs: false,
+        correlationId,
+      },
+    });
+    return result;
+  }
+
+  /**
+   * Remove an application path. Webswing refuses while the app is enabled
+   * ("Stop the app first"), so this disables it and waits for the config poller
+   * to pick that up before asking for removal.
+   */
+  async unpublishApp(
+    path: string,
+    config: Record<string, unknown>,
+  ): Promise<{ ok: boolean; error: string | null }> {
+    const disabled = await this.publishApp(path, { ...config, enabled: false }, { create: false });
+    if (!disabled.ok) return disabled;
+    // The reload interval is 1 s by default; one beat past it is enough.
+    await new Promise((r) => setTimeout(r, 1_500));
+    if (this.ws?.readyState !== WebSocket.OPEN) {
+      return { ok: false, error: "The Webswing admin channel is not connected." };
+    }
+    this.send({ removeApp: { path } });
+    return { ok: true, error: null };
+  }
+
+  private awaitSaveResult(
+    correlationId: string,
+  ): Promise<{ ok: boolean; error: string | null }> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingSaves.delete(correlationId);
+        resolve({ ok: false, error: "Webswing did not answer the configuration save." });
+      }, 15_000);
+      this.pendingSaves.set(correlationId, (r) => {
+        clearTimeout(timer);
+        resolve(r);
+      });
+    });
   }
 
   private onMessage(data: Buffer): void {
@@ -200,6 +278,22 @@ class AdminConsoleClient {
       });
     } catch (e) {
       this.setState({ lastError: `decode failed: ${(e as Error).message}` });
+      return;
+    }
+
+    const saveResult = msg.saveConfigResult as
+      | { serverResult?: boolean; serverError?: string; correlationId?: string }
+      | undefined;
+    if (saveResult?.correlationId) {
+      const resolve = this.pendingSaves.get(saveResult.correlationId);
+      if (resolve) {
+        this.pendingSaves.delete(saveResult.correlationId);
+        resolve({
+          ok: saveResult.serverResult !== false,
+          // Webswing returns a full stack trace; the first line is the useful part.
+          error: saveResult.serverError ? String(saveResult.serverError).split("\n")[0] : null,
+        });
+      }
       return;
     }
 

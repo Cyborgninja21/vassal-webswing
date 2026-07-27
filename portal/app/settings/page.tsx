@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { currentIdentity } from "@/lib/identity";
-import { CATALOG } from "@/lib/catalog";
+import { allModules } from "@/lib/catalog";
 import { tableStore } from "@/lib/tables";
 import { SettingsForm } from "@/components/settings-form";
 
@@ -35,7 +35,7 @@ export default async function Settings() {
           defaultModule: me.defaultModule ?? "",
           spectateByDefault: me.spectateByDefault ?? false,
         }}
-        modules={CATALOG.map((m) => ({ path: m.path, title: m.title }))}
+        modules={allModules().map((m) => ({ path: m.path, title: m.title }))}
       />
     </main>
   );

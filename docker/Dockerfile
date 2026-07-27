@@ -120,7 +120,7 @@ COPY --chown=webswing:webswing phase0/skel /opt/vassal/skel
 COPY --chown=webswing:webswing phase0/vassal-java /opt/vassal/bin/vassal-java
 
 RUN chmod +x /opt/webswing/entrypoint.sh /opt/vassal/bin/vassal-java \
- && mkdir -p /data/users /data/transfers /opt/webswing/logs /opt/webswing/tmp \
+ && mkdir -p /data/users /data/transfers /data/modules /data/config /opt/webswing/logs /opt/webswing/tmp \
  && chown -R webswing:webswing /data /opt/webswing
 
 USER webswing
