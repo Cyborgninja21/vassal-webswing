@@ -31,6 +31,8 @@ export type Table = {
   createdAt: number;
   /** Set when the table is retired; the slot is then reusable. */
   closedAt: number | null;
+  /** Usernames the portal seated as observers rather than players. */
+  spectators?: string[];
 };
 
 export type UserIdentity = {
@@ -154,9 +156,22 @@ class TableStore {
         createdBy: input.createdBy,
         createdAt: Date.now(),
         closedAt: null,
+        spectators: [],
       };
       state.tables.push(table);
       return table;
+    });
+  }
+
+  /** Record (or clear) that a user is watching rather than playing. */
+  async setSpectator(slot: number, username: string, watching: boolean): Promise<void> {
+    await this.run((state) => {
+      const table = state.tables.find((x) => x.slot === slot && x.closedAt === null);
+      if (!table) return;
+      const current = new Set(table.spectators ?? []);
+      if (watching) current.add(username);
+      else current.delete(username);
+      table.spectators = [...current];
     });
   }
 
@@ -187,6 +202,12 @@ class TableStore {
         (t) => t.closedAt === null || now - t.closedAt < 24 * 60 * 60 * 1000,
       );
     });
+  }
+
+  /** username → display nickname, for turning lobby names back into accounts. */
+  async nicknames(): Promise<Map<string, string>> {
+    const state = await this.load();
+    return new Map(Object.entries(state.users).map(([u, i]) => [u, i.nickname]));
   }
 
   /** Stable identity, minted on first use and reused forever after. */

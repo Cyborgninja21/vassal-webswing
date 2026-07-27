@@ -58,6 +58,11 @@ export type SeedRequest = {
    * instead of silently resuming the last table.
    */
   room: string | null;
+  /**
+   * Marks the session as a spectator. The patched PlayerRoster then takes the
+   * `<observer>` side without asking, which is what hides private hands.
+   */
+  spectator: boolean;
 };
 
 function userPrefsDir(username: string): string {
@@ -184,6 +189,13 @@ export async function seedPlayerPrefs(req: SeedRequest): Promise<void> {
     global.set("PortalRoom", req.room);
   } else {
     global.delete("PortalRoom");
+  }
+
+  // Read once at launch by the patched PlayerRoster.
+  if (req.spectator) {
+    global.set("PortalSpectator", "true");
+  } else {
+    global.delete("PortalSpectator");
   }
 
   await writeProps(globalFile, global);

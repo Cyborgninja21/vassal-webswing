@@ -95,6 +95,7 @@ export function LiveBoard({ initial, username }: { initial: PortalState; usernam
         busy={busy}
         username={username}
         onJoin={(t) => post(`/api/tables/${t.slot}/join`, undefined, `join-${t.slot}`)}
+        onWatch={(t) => post(`/api/tables/${t.slot}/watch`, undefined, `watch-${t.slot}`)}
         onClose={closeTable}
       />
 
@@ -142,6 +143,7 @@ function TablesPanel({
   busy,
   username,
   onJoin,
+  onWatch,
   onClose,
 }: {
   state: PortalState;
@@ -149,6 +151,7 @@ function TablesPanel({
   busy: string | null;
   username: string;
   onJoin: (t: TableView) => void;
+  onWatch: (t: TableView) => void;
   onClose: (t: TableView) => void;
 }) {
   const { tables, hall } = state;
@@ -190,12 +193,19 @@ function TablesPanel({
                 {table.players.map((player) => (
                   <Chip key={player}>{player}</Chip>
                 ))}
+                {table.spectators.map((player) => (
+                  <Chip key={`watch-${player}`} muted>
+                    {player} · watching
+                  </Chip>
+                ))}
                 {table.arriving.map((player) => (
                   <Chip key={`arriving-${player}`} muted>
                     {player} · joining
                   </Chip>
                 ))}
-                {table.players.length === 0 && table.arriving.length === 0 ? (
+                {table.players.length === 0 &&
+                table.spectators.length === 0 &&
+                table.arriving.length === 0 ? (
                   <span className="text-xs text-parchment-500">empty — take a seat</span>
                 ) : null}
               </ul>
@@ -208,6 +218,14 @@ function TablesPanel({
                   className="rounded bg-brass-600/80 px-3 py-1.5 text-sm text-parchment-100 hover:bg-brass-600 disabled:opacity-50"
                 >
                   {busy === `join-${table.slot}` ? "Seating you…" : "Take a seat"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onWatch(table)}
+                  disabled={busy === `watch-${table.slot}`}
+                  className="rounded border border-brass-400/30 px-3 py-1.5 text-sm text-parchment-300 hover:border-brass-400/60 hover:text-parchment-100 disabled:opacity-50"
+                >
+                  {busy === `watch-${table.slot}` ? "Opening…" : "Watch"}
                 </button>
                 {table.createdBy === username ? (
                   <button
@@ -299,8 +317,9 @@ function NewTable({
       </form>
       <p className="mt-2 text-xs text-parchment-500">
         Opening or joining a table puts you straight into the game room, already
-        named and connected. The only thing left to do in VASSAL is choose your
-        side.
+        named and connected — the only thing left to do in VASSAL is choose your
+        side. <strong>Watch</strong> joins as an observer instead: private hands
+        stay hidden and the board is read-only.
       </p>
     </section>
   );

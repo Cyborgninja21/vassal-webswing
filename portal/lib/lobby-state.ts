@@ -86,14 +86,14 @@ class LobbyStore {
   /** Replaces one slot's roster — each push carries that lobby's full roster. */
   update(slot: number, rows: PresenceRow[], at: number = Date.now()): LobbySnapshot {
     const players: string[] = [];
-    let module: string | null = null;
+    let moduleId: string | null = null;
     for (const row of rows) {
-      module ??= row.module;
+      moduleId ??= row.module;
       if (!players.includes(row.player)) players.push(row.player);
     }
     players.sort((a, b) => a.localeCompare(b));
 
-    this.bySlot.set(slot, { slot, module, players, updatedAt: at });
+    this.bySlot.set(slot, { slot, module: moduleId, players, updatedAt: at });
     this.lastUpdate = at;
 
     const snapshot = this.get();

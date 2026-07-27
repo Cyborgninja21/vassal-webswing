@@ -33,13 +33,15 @@ export type SeatResult = {
   /** True when a stale Player JVM had to be ended so the new prefs take effect. */
   restarted: boolean;
   alreadySeated: boolean;
+  spectator: boolean;
 };
 
 export async function seatPlayer(
   username: string,
   table: Table,
-  nickname?: string,
+  opts: { spectator?: boolean; nickname?: string } = {},
 ): Promise<SeatResult> {
+  const { spectator = false, nickname } = opts;
   const mod = findModuleByPath(table.modulePath);
   if (!mod) throw new Error(`unknown module ${table.modulePath}`);
 
@@ -58,12 +60,18 @@ export async function seatPlayer(
     vassalModuleName: mod.vassalModuleName,
     server,
     room: table.name,
+    spectator,
   });
+
+  await tableStore.setSpectator(table.slot, username, spectator);
 
   // Already at this table? Leave the session alone — that is a reconnect, and
   // killing it would throw away their board position for no reason.
   const here = lobbyStore.get().slots.find((s) => s.slot === table.slot);
-  const alreadySeated = Boolean(here?.players.includes(identity.nickname));
+  // A spectator switching in (or a player switching to watching) must always
+  // get a fresh JVM: the side is decided once, at startup.
+  const alreadySeated =
+    !spectator && Boolean(here?.players.includes(identity.nickname));
 
   let restarted = false;
   if (!alreadySeated) {
@@ -75,10 +83,13 @@ export async function seatPlayer(
   }
 
   return {
-    launchUrl: table.modulePath,
+    // Spectators go through the portal's watch page, which frames the canvas
+    // inert so a stray click cannot reach the board.
+    launchUrl: spectator ? `/watch/${table.slot}` : table.modulePath,
     table,
     nickname: identity.nickname,
     restarted,
     alreadySeated,
+    spectator,
   };
 }

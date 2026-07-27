@@ -23,6 +23,8 @@ export type TableView = {
   modulePath: string;
   createdBy: string;
   players: string[];
+  /** Present, but watching as observers rather than playing. */
+  spectators: string[];
   /** Users with a live Player JVM for this module but not yet seated anywhere. */
   arriving: string[];
 };
@@ -80,6 +82,7 @@ export async function buildPortalState(): Promise<PortalState> {
   const seated = new Set<string>();
   for (const players of playersBySlot.values()) for (const p of players) seated.add(p);
 
+  const nicknameFor = await tableStore.nicknames();
   const sorted = [...registry].sort((a, b) => a.slot - b.slot);
   const tables: TableView[] = sorted.map((table) => {
     const mod = findModuleByPath(table.modulePath);
@@ -91,13 +94,20 @@ export async function buildPortalState(): Promise<PortalState> {
     const candidates = [...(usersByPath.get(table.modulePath) ?? [])].filter(
       (u) => !seated.has(u),
     );
+    // The lobby feed reports names, not roles, so the registry is what tells a
+    // watcher apart from a player.
+    const present = playersBySlot.get(table.slot) ?? [];
+    const watchingNicks = new Set(
+      (table.spectators ?? []).map((u) => nicknameFor.get(u) ?? u),
+    );
     return {
       slot: table.slot,
       name: table.name,
       moduleTitle: mod?.title ?? table.modulePath,
       modulePath: table.modulePath,
       createdBy: table.createdBy,
-      players: playersBySlot.get(table.slot) ?? [],
+      players: present.filter((n) => !watchingNicks.has(n)),
+      spectators: present.filter((n) => watchingNicks.has(n)),
       arriving: soleTableForModule ? candidates.sort((a, b) => a.localeCompare(b)) : [],
     };
   });

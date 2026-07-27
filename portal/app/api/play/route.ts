@@ -38,6 +38,7 @@ export async function POST(req: Request): Promise<Response> {
     vassalModuleName: mod.vassalModuleName,
     server: null,
     room: null,
+    spectator: false,
   });
 
   // Prefs are read once at JVM start, so a session still pointed at a table has
