@@ -1,6 +1,8 @@
+import Link from "next/link";
 import { adminConsole } from "@/lib/admin-console";
 import { currentIdentity } from "@/lib/identity";
 import { buildPortalState } from "@/lib/portal-state";
+import { tableStore } from "@/lib/tables";
 import { LiveBoard } from "@/components/live-board";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +24,12 @@ export default async function Home() {
   }
 
   adminConsole.start();
-  const initial = await buildPortalState();
+  const me = await tableStore.identity(identity.username);
+  const initial = await buildPortalState({
+    isAdmin: identity.isAdmin,
+    defaultModule: me.defaultModule ?? "",
+    spectateByDefault: me.spectateByDefault ?? false,
+  });
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-10">
@@ -35,10 +42,22 @@ export default async function Home() {
             VASSAL modules, in your browser. Pick a game to take a seat.
           </p>
         </div>
-        <p className="text-right text-xs text-parchment-500">
-          signed in as <span className="text-parchment-300">{identity.username}</span>
-          {identity.isAdmin ? <span className="ml-2 text-brass-400">operator</span> : null}
-        </p>
+        <div className="text-right text-xs text-parchment-500">
+          <p>
+            signed in as <span className="text-parchment-300">{identity.username}</span>
+            {identity.isAdmin ? <span className="ml-2 text-brass-400">operator</span> : null}
+          </p>
+          <nav className="mt-1 flex justify-end gap-3">
+            <Link href="/settings" className="text-brass-400 underline-offset-4 hover:underline">
+              settings
+            </Link>
+            {identity.isAdmin ? (
+              <Link href="/admin" className="text-brass-400 underline-offset-4 hover:underline">
+                operator console
+              </Link>
+            ) : null}
+          </nav>
+        </div>
       </header>
 
       <LiveBoard initial={initial} username={identity.username} />

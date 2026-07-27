@@ -27,6 +27,9 @@ export type TableView = {
   spectators: string[];
   /** Users with a live Player JVM for this module but not yet seated anywhere. */
   arriving: string[];
+  maxSeats: number;
+  spectatorsAllowed: boolean;
+  locked: boolean;
 };
 
 export type ModuleView = {
@@ -60,9 +63,18 @@ export type PortalState = {
   hall: string[];
   modules: ModuleView[];
   capacity: { used: number; total: number };
+  /** Live Player JVMs against the portal's own ceiling. */
+  seats: { used: number; total: number };
+  viewer: { isAdmin: boolean; defaultModule: string; spectateByDefault: boolean };
 };
 
-export async function buildPortalState(): Promise<PortalState> {
+export async function buildPortalState(
+  viewer: { isAdmin: boolean; defaultModule: string; spectateByDefault: boolean } = {
+    isAdmin: false,
+    defaultModule: "",
+    spectateByDefault: false,
+  },
+): Promise<PortalState> {
   const lobby = lobbyStore.get();
   const admin = adminConsole.getState();
   const registry = await tableStore.list();
@@ -109,6 +121,9 @@ export async function buildPortalState(): Promise<PortalState> {
       players: present.filter((n) => !watchingNicks.has(n)),
       spectators: present.filter((n) => watchingNicks.has(n)),
       arriving: soleTableForModule ? candidates.sort((a, b) => a.localeCompare(b)) : [],
+      maxSeats: table.maxSeats ?? env.defaultMaxSeats,
+      spectatorsAllowed: table.spectatorsAllowed !== false,
+      locked: table.locked === true,
     };
   });
 
@@ -142,5 +157,7 @@ export async function buildPortalState(): Promise<PortalState> {
     hall: playersBySlot.get(HALL_SLOT) ?? [],
     modules,
     capacity: { used: tables.length, total: env.tableSlots },
+    seats: { used: (admin.sessions ?? []).length, total: env.maxConcurrentSeats },
+    viewer,
   };
 }

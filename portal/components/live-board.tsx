@@ -62,6 +62,26 @@ export function LiveBoard({ initial, username }: { initial: PortalState; usernam
     }
   }
 
+  async function configureTable(t: TableView, patch: Record<string, unknown>) {
+    setBusy(`cfg-${t.slot}`);
+    setError(null);
+    try {
+      const res = await fetch(`/api/tables/${t.slot}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error ?? `Could not update the table (${res.status})`);
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function closeTable(t: TableView) {
     setBusy(`close-${t.slot}`);
     setError(null);
@@ -96,6 +116,7 @@ export function LiveBoard({ initial, username }: { initial: PortalState; usernam
         username={username}
         onJoin={(t) => post(`/api/tables/${t.slot}/join`, undefined, `join-${t.slot}`)}
         onWatch={(t) => post(`/api/tables/${t.slot}/watch`, undefined, `watch-${t.slot}`)}
+        onConfigure={configureTable}
         onClose={closeTable}
       />
 
@@ -144,6 +165,7 @@ function TablesPanel({
   username,
   onJoin,
   onWatch,
+  onConfigure,
   onClose,
 }: {
   state: PortalState;
@@ -152,6 +174,7 @@ function TablesPanel({
   username: string;
   onJoin: (t: TableView) => void;
   onWatch: (t: TableView) => void;
+  onConfigure: (t: TableView, patch: Record<string, unknown>) => void;
   onClose: (t: TableView) => void;
 }) {
   const { tables, hall } = state;
@@ -167,8 +190,8 @@ function TablesPanel({
           <span>{streamUp ? "live" : "reconnecting…"}</span>
           <span aria-hidden>·</span>
           <span>
-            {state.capacity.used} of {state.capacity.total} tables open
-            {state.lobby.playerCount ? ` · ${state.lobby.playerCount} seated` : ""}
+            {state.capacity.used} of {state.capacity.total} tables ·{" "}
+            {state.seats.used} of {state.seats.total} seats in use
           </span>
         </p>
       </div>
@@ -210,12 +233,22 @@ function TablesPanel({
                 ) : null}
               </ul>
 
-              <div className="mt-4 flex items-center gap-3">
+              <p className="mt-2 text-xs text-parchment-500">
+                {table.players.length} of {table.maxSeats} seats
+                {table.locked ? " · locked" : ""}
+                {table.spectatorsAllowed ? "" : " · no spectators"}
+              </p>
+
+              <div className="mt-4 flex flex-wrap items-center gap-3">
                 <button
                   type="button"
                   onClick={() => onJoin(table)}
-                  disabled={busy === `join-${table.slot}`}
-                  className="rounded bg-brass-600/80 px-3 py-1.5 text-sm text-parchment-100 hover:bg-brass-600 disabled:opacity-50"
+                  disabled={busy === `join-${table.slot}` || table.locked}
+                  className={`rounded px-3 py-1.5 text-sm disabled:opacity-40 ${
+                    state.viewer.spectateByDefault
+                      ? "border border-brass-400/30 text-parchment-300 hover:border-brass-400/60"
+                      : "bg-brass-600/80 text-parchment-100 hover:bg-brass-600"
+                  }`}
                 >
                   {busy === `join-${table.slot}` ? "Seating you…" : "Take a seat"}
                 </button>
@@ -227,7 +260,29 @@ function TablesPanel({
                 >
                   {busy === `watch-${table.slot}` ? "Opening…" : "Watch"}
                 </button>
-                {table.createdBy === username ? (
+                {table.createdBy === username || state.viewer.isAdmin ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => onConfigure(table, { locked: !table.locked })}
+                      disabled={busy === `cfg-${table.slot}`}
+                      className="text-xs text-parchment-500 underline-offset-4 hover:text-parchment-300 hover:underline disabled:opacity-50"
+                    >
+                      {table.locked ? "unlock" : "lock"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onConfigure(table, { spectatorsAllowed: !table.spectatorsAllowed })
+                      }
+                      disabled={busy === `cfg-${table.slot}`}
+                      className="text-xs text-parchment-500 underline-offset-4 hover:text-parchment-300 hover:underline disabled:opacity-50"
+                    >
+                      {table.spectatorsAllowed ? "no spectators" : "allow spectators"}
+                    </button>
+                  </>
+                ) : null}
+                {table.createdBy === username || state.viewer.isAdmin ? (
                   <button
                     type="button"
                     onClick={() => onClose(table)}
@@ -262,7 +317,9 @@ function NewTable({
   onCreate: (name: string, modulePath: string) => void;
 }) {
   const [name, setName] = useState("");
-  const [modulePath, setModulePath] = useState(state.modules[0]?.path ?? "");
+  const [modulePath, setModulePath] = useState(
+    state.viewer.defaultModule || state.modules[0]?.path || "",
+  );
   const full = state.capacity.used >= state.capacity.total;
 
   return (

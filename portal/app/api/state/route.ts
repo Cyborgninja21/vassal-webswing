@@ -1,6 +1,7 @@
 import { adminConsole } from "@/lib/admin-console";
 import { currentIdentity } from "@/lib/identity";
 import { buildPortalState } from "@/lib/portal-state";
+import { viewerOf } from "@/lib/viewer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,7 +12,7 @@ export async function GET(): Promise<Response> {
   if (!identity) return new Response("unauthorized", { status: 401 });
 
   adminConsole.start();
-  return Response.json(await buildPortalState(), {
+  return Response.json(await buildPortalState(await viewerOf(identity)), {
     headers: { "cache-control": "no-store" },
   });
 }

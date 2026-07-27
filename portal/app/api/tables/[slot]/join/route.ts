@@ -1,6 +1,6 @@
 import { currentIdentity } from "@/lib/identity";
 import { tableStore } from "@/lib/tables";
-import { seatPlayer } from "@/lib/seating";
+import { checkSeatingAllowed, seatPlayer } from "@/lib/seating";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,6 +20,9 @@ export async function POST(
 
   const table = await tableStore.get(slot);
   if (!table) return Response.json({ error: "That table is gone." }, { status: 404 });
+
+  const refusal = await checkSeatingAllowed(identity.username, table, false);
+  if (refusal) return Response.json({ error: refusal }, { status: 409 });
 
   try {
     return Response.json(await seatPlayer(identity.username, table));

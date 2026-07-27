@@ -2,6 +2,7 @@ import { adminConsole } from "@/lib/admin-console";
 import { findModuleByPath } from "@/lib/catalog";
 import { lobbyStore } from "@/lib/lobby-state";
 import { seedPlayerPrefs, type TableServer } from "@/lib/vassal-prefs";
+import { env } from "@/lib/env";
 import { slotHost, slotPort, tableStore, type Table } from "@/lib/tables";
 
 /**
@@ -35,6 +36,50 @@ export type SeatResult = {
   alreadySeated: boolean;
   spectator: boolean;
 };
+
+/**
+ * Refuse a seat the portal knows it cannot honour, *before* Webswing's
+ * `maxClients` does. VASSAL's own room lock is cosmetic — its password is a
+ * value the server already broadcasts — so these are the real gate, and they
+ * are checked here, server-side, on every seating request rather than in the UI.
+ */
+export async function checkSeatingAllowed(
+  username: string,
+  table: Table,
+  spectator: boolean,
+): Promise<string | null> {
+  const identity = await tableStore.identity(username);
+  const present = lobbyStore.get().slots.find((s) => s.slot === table.slot);
+  const alreadyHere = present?.players.includes(identity.nickname) ?? false;
+
+  // Someone already at the table is always allowed back — that is a reconnect.
+  if (alreadyHere) return null;
+
+  if (spectator && table.spectatorsAllowed === false) {
+    return "The host has turned off spectators for this table.";
+  }
+  if (!spectator && table.locked) {
+    return "That table is locked. Ask the host to unlock it.";
+  }
+  if (!spectator) {
+    const watching = new Set(
+      (table.spectators ?? []).map((u) => u),
+    );
+    const seatsTaken = (present?.players.length ?? 0) - watching.size;
+    const cap = table.maxSeats ?? env.defaultMaxSeats;
+    if (seatsTaken >= cap) {
+      return `That table is full (${cap} seat${cap === 1 ? "" : "s"}).`;
+    }
+  }
+
+  // Whole-stack ceiling: every seat is a ~600 MB JVM.
+  const live = (adminConsole.getState().sessions ?? []).length;
+  if (live >= env.maxConcurrentSeats && !adminConsole.sessionsFor(username).length) {
+    return `The server is at capacity (${env.maxConcurrentSeats} live games). Try again shortly.`;
+  }
+
+  return null;
+}
 
 export async function seatPlayer(
   username: string,

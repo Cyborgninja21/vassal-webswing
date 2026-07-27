@@ -33,11 +33,24 @@ export type Table = {
   closedAt: number | null;
   /** Usernames the portal seated as observers rather than players. */
   spectators?: string[];
+  /**
+   * Portal-enforced seat cap. VASSAL's own room lock is cosmetic — its password
+   * is a value the server already broadcasts to the module — so every access
+   * decision belongs here, checked server-side on the way in.
+   */
+  maxSeats?: number;
+  spectatorsAllowed?: boolean;
+  /** Locked tables refuse new players; people already seated are unaffected. */
+  locked?: boolean;
 };
 
 export type UserIdentity = {
   /** Display name VASSAL shows to the other players. */
   nickname: string;
+  /** Pre-selected game when opening a table. */
+  defaultModule?: string;
+  /** Prefer the Watch button over Take a seat. */
+  spectateByDefault?: boolean;
   /**
    * Stable per-user token written to the module's `SecretName` pref. VASSAL
    * matches it to hand a returning player their seat back. It is NOT a
@@ -129,7 +142,13 @@ class TableStore {
    * even if the registry thinks it is closed.
    */
   async create(
-    input: { name: string; modulePath: string; createdBy: string },
+    input: {
+      name: string;
+      modulePath: string;
+      createdBy: string;
+      maxSeats?: number;
+      spectatorsAllowed?: boolean;
+    },
     occupied: ReadonlySet<number>,
   ): Promise<Table> {
     return this.run((state) => {
@@ -157,6 +176,9 @@ class TableStore {
         createdAt: Date.now(),
         closedAt: null,
         spectators: [],
+        maxSeats: input.maxSeats ?? env.defaultMaxSeats,
+        spectatorsAllowed: input.spectatorsAllowed ?? true,
+        locked: false,
       };
       state.tables.push(table);
       return table;
@@ -172,6 +194,44 @@ class TableStore {
       if (watching) current.add(username);
       else current.delete(username);
       table.spectators = [...current];
+    });
+  }
+
+  /** Update a table's portal-side settings. Returns the updated row. */
+  async configure(
+    slot: number,
+    patch: Partial<Pick<Table, "name" | "maxSeats" | "spectatorsAllowed" | "locked">>,
+  ): Promise<Table | null> {
+    return this.run((state) => {
+      const table = state.tables.find((x) => x.slot === slot && x.closedAt === null);
+      if (!table) return null;
+      if (patch.name !== undefined) table.name = patch.name;
+      if (patch.maxSeats !== undefined) table.maxSeats = patch.maxSeats;
+      if (patch.spectatorsAllowed !== undefined) {
+        table.spectatorsAllowed = patch.spectatorsAllowed;
+      }
+      if (patch.locked !== undefined) table.locked = patch.locked;
+      return table;
+    });
+  }
+
+  /** Update a user's own preferences. */
+  async updateIdentity(
+    username: string,
+    patch: Partial<Pick<UserIdentity, "nickname" | "defaultModule" | "spectateByDefault">>,
+  ): Promise<UserIdentity> {
+    return this.run((state) => {
+      const identity = state.users[username] ?? {
+        nickname: username,
+        secretName: randomBytes(16).toString("hex"),
+      };
+      if (patch.nickname) identity.nickname = patch.nickname;
+      if (patch.defaultModule !== undefined) identity.defaultModule = patch.defaultModule;
+      if (patch.spectateByDefault !== undefined) {
+        identity.spectateByDefault = patch.spectateByDefault;
+      }
+      state.users[username] = identity;
+      return identity;
     });
   }
 

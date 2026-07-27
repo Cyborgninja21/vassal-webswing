@@ -87,6 +87,22 @@ export const env = {
   get tableHostPattern(): string {
     return optional("VASSAL_TABLE_HOST_PATTERN", "vassal-table-{n}");
   },
+  /** Default seat cap for a new table; the host can lower or raise it. */
+  get defaultMaxSeats(): number {
+    const n = Number.parseInt(optional("VASSAL_DEFAULT_MAX_SEATS", "6"), 10);
+    return Number.isFinite(n) && n > 0 ? n : 6;
+  },
+
+  /**
+   * Ceiling on concurrent Player JVMs across the whole stack. Each is ~600 MB
+   * against a 24 GB container limit, so the portal refuses a seat *before*
+   * Webswing's maxClients does — a clear message beats an opaque error.
+   */
+  get maxConcurrentSeats(): number {
+    const n = Number.parseInt(optional("VASSAL_MAX_CONCURRENT_SEATS", "16"), 10);
+    return Number.isFinite(n) && n > 0 ? n : 16;
+  },
+
   get tablePortBase(): number {
     const n = Number.parseInt(optional("VASSAL_TABLE_PORT_BASE", "5050"), 10);
     return Number.isFinite(n) ? n : 5050;

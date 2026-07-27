@@ -2,6 +2,7 @@ import { adminConsole } from "@/lib/admin-console";
 import { currentIdentity } from "@/lib/identity";
 import { lobbyStore } from "@/lib/lobby-state";
 import { buildPortalState } from "@/lib/portal-state";
+import { viewerOf } from "@/lib/viewer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,7 +45,7 @@ export async function GET(req: Request): Promise<Response> {
       const push = () => {
         building = building
           .then(async () => {
-            if (!closed) send("state", await buildPortalState());
+            if (!closed) send("state", await buildPortalState(await viewerOf(identity)));
           })
           .catch(() => undefined);
       };
