@@ -107,7 +107,12 @@ class TableStore {
 
   private async persist(): Promise<void> {
     if (!this.state) return;
-    await fs.mkdir(env.stateDir, { recursive: true, mode: 0o777 });
+    // 0700, not 0777: this directory holds the table registry and every
+    // player's SecretName. It is not an isolation boundary against module code
+    // (every Player JVM runs as this same uid — Webswing does not switch users
+    // per session), but it does keep the state out of reach of any *other* uid
+    // that mounts the same NFS export.
+    await fs.mkdir(env.stateDir, { recursive: true, mode: 0o700 });
     const tmp = `${this.file}.tmp`;
     await fs.writeFile(tmp, JSON.stringify(this.state, null, 2), "utf8");
     await fs.rename(tmp, this.file);
