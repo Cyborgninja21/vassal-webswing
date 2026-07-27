@@ -22,15 +22,17 @@ import { sanitizeUsername } from "@/lib/identity";
  *    server by hand — its absence is exactly why players had to go into Server
  *    Controls. Its value is `Properties.store()` text, so it is multi-line and
  *    gets `\n`-escaped when written into V_Global.
+ *  - `V_Global` → `PortalRoom`: the room the patched launcher joins after
+ *    connecting. Main Room cannot hold a game — VASSAL tears the game state
+ *    down when you join the default room and only synchronises for named ones.
  *  - `<module>` → `RealName` / `SecretName`: the identity. `SecretName` is what
  *    VASSAL matches to hand a returning player their seat back, so the portal
  *    issues a stable random one per user (never a real credential — VASSAL
  *    stores it in clear and broadcasts it to the module).
  *
- * What this does NOT do: connect. Stock VASSAL 3.7.24 has no auto-connect —
- * `setDefaultRoomName()` is dead code and the only automatic `setConnected(true)`
- * is behind the welcome wizard's "Play Online" radio. The player still presses
- * Connect once. See the plan's Phase 5 notes.
+ * Connecting and joining the room are done by the engine patch this fork
+ * carries (patches/Player.java): stock VASSAL 3.7.24 will not connect by itself
+ * and always lands in Main Room. All the player does is pick a side.
  */
 
 const PREFS_SUBDIR = path.join(".VASSAL", "prefs");
@@ -50,6 +52,12 @@ export type SeedRequest = {
   /** VASSAL's internal module name — the prefs filename is derived from it. */
   vassalModuleName: string | null;
   server: TableServer | null;
+  /**
+   * Room to auto-join, read by the patched VASSAL launcher (patches/Player.java).
+   * `null` clears it, so opening a module directly behaves like stock VASSAL
+   * instead of silently resuming the last table.
+   */
+  room: string | null;
 };
 
 function userPrefsDir(username: string): string {
@@ -170,6 +178,14 @@ export async function seedPlayerPrefs(req: SeedRequest): Promise<void> {
     global.set("ServerAddressBook", mergeAddressBook(global.get("ServerAddressBook"), entry));
     global.set("ServerSelected", encodeServerSelected(props));
   }
+
+  // Read once at launch by the patched Player: connect, then join this room.
+  if (req.room) {
+    global.set("PortalRoom", req.room);
+  } else {
+    global.delete("PortalRoom");
+  }
+
   await writeProps(globalFile, global);
 
   // --- module prefs: the identity VASSAL uses to re-claim a seat ---

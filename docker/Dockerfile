@@ -29,6 +29,18 @@ RUN curl -fsSL -o vassal.tar.bz2 \
  && echo "${VASSAL_SHA256}  vassal.tar.bz2" | sha256sum -c - \
  && tar -xjf vassal.tar.bz2
 
+# VASSAL patch: auto-seat at the room the portal chose. See patches/Player.java
+# for why this cannot be done from outside the engine. Compiled against the
+# shipped jars and spliced back into Vengine.jar — VASSAL itself is not rebuilt.
+COPY patches/Player.java /build/patches/Player.java
+RUN set -e; \
+    LIB=/build/VASSAL-${VASSAL_VERSION}/lib; \
+    mkdir -p /build/out/vassal; \
+    javac -nowarn -cp "$LIB/*" -d /build/out/vassal /build/patches/Player.java; \
+    test -f /build/out/vassal/VASSAL/launch/Player.class; \
+    (cd /build/out/vassal && jar uf "$LIB/Vengine.jar" VASSAL/launch/Player*.class); \
+    unzip -l "$LIB/Vengine.jar" | grep -c 'VASSAL/launch/Player' >/dev/null
+
 # Game modules (from the VASSAL module library; per-module sha256 pins)
 COPY docker/modules.list /build/modules.list
 RUN mkdir -p /opt/vassal/modules && cd /opt/vassal/modules \

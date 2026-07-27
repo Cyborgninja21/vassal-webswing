@@ -104,7 +104,11 @@ export function LiveBoard({ initial, username }: { initial: PortalState; usernam
         onCreate={(name, modulePath) => post("/api/tables", { name, modulePath }, "create")}
       />
 
-      <CatalogGrid state={state} />
+      <CatalogGrid
+        state={state}
+        busy={busy}
+        onOpen={(path) => post("/api/play", { modulePath: path }, `play-${path}`)}
+      />
     </>
   );
 }
@@ -294,15 +298,23 @@ function NewTable({
         </button>
       </form>
       <p className="mt-2 text-xs text-parchment-500">
-        Opening or joining a table sets VASSAL up for you — the right server, your
-        name, and your seat. In VASSAL, press <strong>Connect</strong> once in Server
-        Controls, then choose your side.
+        Opening or joining a table puts you straight into the game room, already
+        named and connected. The only thing left to do in VASSAL is choose your
+        side.
       </p>
     </section>
   );
 }
 
-function CatalogGrid({ state }: { state: PortalState }) {
+function CatalogGrid({
+  state,
+  busy,
+  onOpen,
+}: {
+  state: PortalState;
+  busy: string | null;
+  onOpen: (modulePath: string) => void;
+}) {
   return (
     <section aria-labelledby="games-heading" className="mt-12">
       <h2 id="games-heading" className="font-display text-2xl text-parchment-100">
@@ -310,10 +322,12 @@ function CatalogGrid({ state }: { state: PortalState }) {
       </h2>
       <div className="mt-4 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
         {state.modules.map((mod) => (
-          <a
+          <button
             key={mod.path}
-            href={mod.path}
-            className="plate plate-hover group flex flex-col overflow-hidden rounded-xl shadow-plate"
+            type="button"
+            onClick={() => onOpen(mod.path)}
+            disabled={busy === `play-${mod.path}`}
+            className="plate plate-hover group flex flex-col overflow-hidden rounded-xl text-left shadow-plate disabled:opacity-60"
           >
             <ModuleArt motif={mod.motif} className="aspect-square w-full" />
             <div className="flex flex-1 flex-col p-4">
@@ -348,8 +362,11 @@ function CatalogGrid({ state }: { state: PortalState }) {
                       : "session view unavailable"}
                 </span>
               </p>
+              <p className="mt-1 text-xs text-parchment-500">
+                {busy === `play-${mod.path}` ? "Opening…" : "Open on its own (no table)"}
+              </p>
             </div>
-          </a>
+          </button>
         ))}
       </div>
     </section>

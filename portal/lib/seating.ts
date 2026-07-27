@@ -20,11 +20,10 @@ import { slotHost, slotPort, tableStore, type Table } from "@/lib/tables";
  *      would appear to do nothing, then
  *   3. hand the browser the launch URL.
  *
- * What remains manual, and cannot be automated without forking VASSAL: the
- * player presses **Connect** in Server Controls once, then picks a side. Stock
- * 3.7.24 has no auto-connect — `setDefaultRoomName()` is dead code and the only
- * `setConnected(true)` that fires by itself is behind the welcome wizard's
- * "Play Online" radio, which is itself a click.
+ * All that remains manual is VASSAL's side picker, which is an unconditional
+ * modal with no bypass. Connecting and joining the room are handled by the
+ * engine patch in patches/Player.java, driven by the `PortalRoom` preference
+ * written above.
  */
 
 export type SeatResult = {
@@ -58,6 +57,7 @@ export async function seatPlayer(
     secretName: identity.secretName,
     vassalModuleName: mod.vassalModuleName,
     server,
+    room: table.name,
   });
 
   // Already at this table? Leave the session alone — that is a reconnect, and
