@@ -35,7 +35,6 @@ function withLiveSessions() {
     ...m,
     liveSessions: sessions.filter((s) => s.applicationPath === `/${m.slug}`).length,
     codeTotal: m.codeEntries + m.extensions.reduce((n, e) => n + e.codeEntries, 0),
-    bytesOnDisk: m.archiveBytes,
   }));
 }
 

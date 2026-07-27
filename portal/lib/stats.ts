@@ -1,5 +1,6 @@
 import { adminConsole } from "@/lib/admin-console";
 import { lobbyStore } from "@/lib/lobby-state";
+import { moduleRegistry } from "@/lib/modules";
 import { tableStore } from "@/lib/tables";
 
 /**
@@ -27,7 +28,9 @@ export function startStatsLogger(): void {
       // Keyed key=value so Loki's logfmt parser picks it up without a regex.
       console.log(
         `vassal_portal_stats tables=${tables.length} seats=${seats} ` +
-          `present=${lobby.playerCount} spectators=${spectators.size}`,
+          `present=${lobby.playerCount} spectators=${spectators.size} ` +
+          `modules=${moduleRegistry.enabled().length} ` +
+          `modulebytes=${moduleRegistry.bytesOnDisk()}`,
       );
     } catch {
       // Never let telemetry take the portal down.

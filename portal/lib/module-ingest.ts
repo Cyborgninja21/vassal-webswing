@@ -315,6 +315,9 @@ export async function ingestModule(input: IngestInput): Promise<IngestResult> {
       extensions,
       archiveSha256: archiveSha,
       archiveBytes,
+      bytesOnDisk:
+        (await fsp.stat(stagedModule)).size +
+        extensions.reduce((n, e) => n + e.size, 0),
       sourceUrl,
       sourceFilename,
       codeEntries,

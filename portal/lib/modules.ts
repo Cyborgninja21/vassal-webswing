@@ -52,6 +52,8 @@ export type ModuleManifest = {
   /** sha256 of the archive exactly as downloaded. The pin. */
   archiveSha256: string;
   archiveBytes: number;
+  /** What the store actually holds: module file + every extension, unpacked. */
+  bytesOnDisk: number;
   sourceUrl: string | null;
   sourceFilename: string | null;
 
@@ -113,6 +115,11 @@ class ModuleRegistry {
 
   enabled(): ModuleManifest[] {
     return this.snapshot().filter((m) => m.enabled);
+  }
+
+  /** Total bytes the store holds, for the capacity panel. */
+  bytesOnDisk(): number {
+    return this.snapshot().reduce((n, m) => n + (m.bytesOnDisk ?? m.archiveBytes), 0);
   }
 
   get(slug: string): ModuleManifest | null {
