@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { headers } from "next/headers";
 import { env } from "@/lib/env";
 
@@ -13,9 +14,13 @@ export type Identity = {
  *
  * Two guards make that safe to trust:
  *
- *  1. `X-Forwarded-For` must be present. Traefik always sets it; a container
- *     talking to us directly on the stack network does not. This is what stops
- *     a compromised sidecar from simply asserting a username header.
+ *  1. The request must carry the edge secret Traefik injects. Anything on the
+ *     stack network can open a socket to `vassal-portal:3000` and assert any
+ *     header it likes — including the Webswing container, where third-party
+ *     module code runs — so a header-presence test is not a control. Proven
+ *     against production 2026-07-27: a `wget` from inside `vassal-webswing`
+ *     with a made-up `X-Forwarded-For` and `X-authentik-groups: Homelab Admins`
+ *     was served the operator API.
  *  2. The username must satisfy the same character class the Webswing realm
  *     enforces, so the two systems can never disagree about who a user is.
  */
@@ -28,11 +33,34 @@ export function sanitizeUsername(raw: string | null | undefined): string | null 
   return v;
 }
 
+/** Constant-time compare that tolerates length mismatch. */
+function secretMatches(given: string | null, expected: string): boolean {
+  if (!given) return false;
+  const a = Buffer.from(given);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+let warnedNoEdgeSecret = false;
+
 export async function currentIdentity(): Promise<Identity | null> {
   const h = await headers();
 
   // Proof the request traversed the proxy rather than arriving on the internal net.
-  if (!h.get("x-forwarded-for")) return null;
+  const expected = env.portalEdgeSecret;
+  if (expected) {
+    if (!secretMatches(h.get(env.portalEdgeHeader), expected)) return null;
+  } else {
+    if (!warnedNoEdgeSecret) {
+      warnedNoEdgeSecret = true;
+      console.warn(
+        "vassal_portal PORTAL_EDGE_SECRET is unset — identity headers are only " +
+          "checked for presence, which anything on this network can forge.",
+      );
+    }
+    if (!h.get("x-forwarded-for")) return null;
+  }
 
   const username = sanitizeUsername(h.get(env.userHeader));
   if (!username) return null;

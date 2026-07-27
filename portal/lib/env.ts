@@ -42,6 +42,27 @@ export const env = {
     return required("LOBBY_PUSH_TOKEN");
   },
 
+  /**
+   * Shared secret Traefik injects on every request it forwards to the portal.
+   *
+   * Without it the only proof a request came through the proxy is "an
+   * X-Forwarded-For header is present", which any client can set. Containers on
+   * the stack network can reach `vassal-portal:3000` directly — including the
+   * Webswing container, where third-party module code runs — so that check
+   * stops accidents, not intent. Since the admin API can publish a module, and
+   * publishing a module runs its code, this needs to be real.
+   *
+   * Optional so the Phase 0/1 scratch stack and local dev still work; when it
+   * is unset the portal falls back to the old check and says so loudly.
+   */
+  get portalEdgeSecret(): string | null {
+    const v = process.env.PORTAL_EDGE_SECRET;
+    return v && v.trim() ? v.trim() : null;
+  },
+  get portalEdgeHeader(): string {
+    return optional("PORTAL_EDGE_HEADER", "x-portal-edge").toLowerCase();
+  },
+
   /** Headers set by Traefik's chain-authentik forward-auth. */
   get userHeader(): string {
     return optional("FORWARD_AUTH_USER_HEADER", "x-authentik-username").toLowerCase();
