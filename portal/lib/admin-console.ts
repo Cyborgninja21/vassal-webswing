@@ -233,6 +233,35 @@ class AdminConsoleClient {
     });
   }
 
+  /**
+   * Terminate a running Player JVM.
+   *
+   * VASSAL reads its preferences once, at JVM start, so re-seating a player who
+   * already has a live session for that module means ending it first — a
+   * reconnect would otherwise attach to a JVM still pointed at the old table.
+   * Webswing's `CONTINUE_FOR_USER` then gives them a fresh JVM on next open.
+   */
+  shutdownSession(applicationPath: string, instanceId: string, force = true): boolean {
+    if (this.ws?.readyState !== WebSocket.OPEN) return false;
+    this.send({ shutdown: { path: applicationPath, instanceId, force } });
+    // Drop it from our projection immediately; the next poll confirms.
+    for (const [key, sessions] of this.byPath) {
+      this.byPath.set(
+        key,
+        sessions.filter((s) => s.instanceId !== instanceId),
+      );
+    }
+    this.setState({ sessions: [...this.byPath.values()].flat(), updatedAt: Date.now() });
+    return true;
+  }
+
+  /** Live sessions belonging to one user, optionally narrowed to one module. */
+  sessionsFor(user: string, applicationPath?: string): WebswingSession[] {
+    return (this.state.sessions ?? []).filter(
+      (s) => s.user === user && (!applicationPath || s.applicationPath === applicationPath),
+    );
+  }
+
   private clearTimers(): void {
     if (this.pollTimer) clearInterval(this.pollTimer);
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);

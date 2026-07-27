@@ -61,4 +61,34 @@ export const env = {
   get publicBaseUrl(): string {
     return optional("PORTAL_PUBLIC_BASE_URL", "https://vassal.epikos-kyklos.com").replace(/\/+$/, "");
   },
+
+  /**
+   * Per-player VASSAL homes, shared read-write with the Webswing container.
+   * The portal writes preferences here before a launch so the player lands at
+   * the right table already named.
+   */
+  get usersDir(): string {
+    return optional("VASSAL_USERS_DIR", "/data/users");
+  },
+
+  /** Portal-owned state (table registry, per-user identities). */
+  get stateDir(): string {
+    return optional("PORTAL_STATE_DIR", "/data/users/_portal");
+  },
+
+  /**
+   * Table lobbies are a fixed pool declared in compose, one container each.
+   * Slot n is `vassal-table-n` on port (base + n); slot 0 is the shared hall.
+   */
+  get tableSlots(): number {
+    const n = Number.parseInt(optional("VASSAL_TABLE_SLOTS", "8"), 10);
+    return Number.isFinite(n) && n > 0 && n <= 64 ? n : 8;
+  },
+  get tableHostPattern(): string {
+    return optional("VASSAL_TABLE_HOST_PATTERN", "vassal-table-{n}");
+  },
+  get tablePortBase(): number {
+    const n = Number.parseInt(optional("VASSAL_TABLE_PORT_BASE", "5050"), 10);
+    return Number.isFinite(n) ? n : 5050;
+  },
 } as const;

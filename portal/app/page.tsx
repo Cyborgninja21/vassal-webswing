@@ -22,7 +22,7 @@ export default async function Home() {
   }
 
   adminConsole.start();
-  const initial = buildPortalState();
+  const initial = await buildPortalState();
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-10">
@@ -41,7 +41,7 @@ export default async function Home() {
         </p>
       </header>
 
-      <LiveBoard initial={initial} />
+      <LiveBoard initial={initial} username={identity.username} />
 
       <footer className="mt-16 border-t border-brass-400/10 pt-6 text-xs text-parchment-500">
         Saves and preferences follow your account — close the tab and come back to

@@ -18,6 +18,15 @@ export type Motif = "shield" | "globe" | "trenches";
 export type ModuleMeta = {
   /** Webswing app path, e.g. "/his". Also the launch URL. */
   path: string;
+  /**
+   * VASSAL's *internal* module name — not the title, not the .vmod filename.
+   * The per-module prefs file is `Prefs.sanitize(vassalModuleName)`, so this
+   * must match exactly or identity seeding writes to a file VASSAL never reads
+   * (silently, with no error). Verified against the live prefs directory; note
+   * that it can carry a version ("Twilight Struggle 3.1"), so re-check it when
+   * upgrading a module.
+   */
+  vassalModuleName: string;
   title: string;
   subtitle: string;
   era: string;
@@ -38,6 +47,7 @@ export type ModuleMeta = {
 export const CATALOG: ModuleMeta[] = [
   {
     path: "/his",
+    vassalModuleName: "Here I Stand (500th Anniversary Edition)",
     title: "Here I Stand",
     subtitle: "500th Anniversary Edition",
     era: "1517 – 1555",
@@ -52,6 +62,7 @@ export const CATALOG: ModuleMeta[] = [
   },
   {
     path: "/twilight-struggle",
+    vassalModuleName: "Twilight Struggle 3.1",
     title: "Twilight Struggle",
     subtitle: "Deluxe Edition",
     era: "1945 – 1989",
@@ -66,6 +77,7 @@ export const CATALOG: ModuleMeta[] = [
   },
   {
     path: "/paths-of-glory",
+    vassalModuleName: "Paths of Glory",
     title: "Paths of Glory",
     subtitle: "The First World War",
     era: "1914 – 1918",

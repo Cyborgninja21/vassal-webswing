@@ -11,7 +11,7 @@ export async function GET(): Promise<Response> {
   if (!identity) return new Response("unauthorized", { status: 401 });
 
   adminConsole.start();
-  return Response.json(buildPortalState(), {
+  return Response.json(await buildPortalState(), {
     headers: { "cache-control": "no-store" },
   });
 }

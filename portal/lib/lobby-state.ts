@@ -1,19 +1,19 @@
 /**
- * Live presence, as reported by the VASSAL lobby.
+ * Live presence, as reported by the VASSAL lobby processes.
  *
  * `VASSAL.chat.node.Server -URL <base>` runs a StatusReporter thread that POSTs
  * to `<base>updateConnections` whenever the roster changes (2 s minimum
- * interval, and it only sends when the content actually differs — so this is
- * change-triggered, not polling). The body is a form field `STATUS` holding
- * lines of:
+ * interval, and only when the content actually differs — change-triggered, not
+ * polling). The body is a form field `STATUS` holding lines of:
  *
  *     moduleId \t roomId \t playerName \n
  *
- * That is the whole feed: no seat/side, no lock state, no turn number. Anything
- * richer has to come from somewhere else (see the plan's Phase 7 notes).
+ * Each table runs its own server, so each posts to its own base URL and the
+ * slot number comes from the path rather than from the payload. That is the
+ * whole feed: no seat/side, no lock state, no turn number.
  *
- * The store is deliberately in-memory: it is a projection of live state that the
- * lobby will re-push in full on the next change, so there is nothing worth
+ * The store is deliberately in-memory: it is a projection of live state that
+ * each lobby re-pushes in full on the next change, so there is nothing worth
  * persisting and nothing to reconcile after a restart.
  */
 
@@ -23,25 +23,24 @@ export type PresenceRow = {
   player: string;
 };
 
-export type LobbyTable = {
-  /** Stable within a snapshot; module+room is the natural key the feed gives us. */
-  id: string;
-  module: string;
-  room: string;
+export type SlotPresence = {
+  slot: number;
+  /** Module id as the lobby reports it (VASSAL's own module name). */
+  module: string | null;
   players: string[];
-  /** VASSAL drops every client into "Main Room" — that is the hall, not a table. */
-  isMainRoom: boolean;
+  updatedAt: number;
 };
 
 export type LobbySnapshot = {
-  /** epoch ms of the last accepted push; null means the lobby has never reported. */
+  /** epoch ms of the most recent accepted push; null means none ever arrived. */
   updatedAt: number | null;
-  tables: LobbyTable[];
-  /** Distinct player names seen anywhere in the feed. */
+  slots: SlotPresence[];
+  /** Distinct player names across every slot. */
   playerCount: number;
 };
 
-const MAIN_ROOM = "Main Room";
+/** The shared default lobby (port 5050) — players who launched without a table. */
+export const HALL_SLOT = 0;
 
 export function parseStatus(body: string): PresenceRow[] {
   const rows: PresenceRow[] = [];
@@ -59,66 +58,58 @@ export function parseStatus(body: string): PresenceRow[] {
   return rows;
 }
 
-export function toSnapshot(rows: PresenceRow[], updatedAt: number | null): LobbySnapshot {
-  const byKey = new Map<string, LobbyTable>();
-  const players = new Set<string>();
-
-  for (const row of rows) {
-    const id = `${row.module} :: ${row.room}`;
-    let table = byKey.get(id);
-    if (!table) {
-      table = {
-        id,
-        module: row.module,
-        room: row.room,
-        players: [],
-        isMainRoom: row.room === MAIN_ROOM,
-      };
-      byKey.set(id, table);
-    }
-    if (!table.players.includes(row.player)) table.players.push(row.player);
-    players.add(row.player);
-  }
-
-  const tables = [...byKey.values()].sort((a, b) => {
-    if (a.isMainRoom !== b.isMainRoom) return a.isMainRoom ? 1 : -1;
-    return a.module.localeCompare(b.module) || a.room.localeCompare(b.room);
-  });
-  for (const t of tables) t.players.sort((a, b) => a.localeCompare(b));
-
-  return { updatedAt, tables, playerCount: players.size };
-}
-
 type Listener = (snapshot: LobbySnapshot) => void;
 
 class LobbyStore {
-  private snapshot: LobbySnapshot = { updatedAt: null, tables: [], playerCount: 0 };
+  private bySlot = new Map<number, SlotPresence>();
   private listeners = new Set<Listener>();
+  private lastUpdate: number | null = null;
 
   get(): LobbySnapshot {
-    return this.snapshot;
+    const slots = [...this.bySlot.values()]
+      .filter((s) => s.players.length > 0)
+      .sort((a, b) => a.slot - b.slot);
+    const players = new Set<string>();
+    for (const s of slots) for (const p of s.players) players.add(p);
+    return { updatedAt: this.lastUpdate, slots, playerCount: players.size };
   }
 
-  /** Replaces the whole projection — every push carries the complete roster. */
-  update(rows: PresenceRow[], at: number = Date.now()): LobbySnapshot {
-    this.snapshot = toSnapshot(rows, at);
+  /** Which slots currently hold at least one player — the occupancy truth. */
+  occupiedSlots(): Set<number> {
+    const set = new Set<number>();
+    for (const s of this.bySlot.values()) {
+      if (s.players.length > 0) set.add(s.slot);
+    }
+    return set;
+  }
+
+  /** Replaces one slot's roster — each push carries that lobby's full roster. */
+  update(slot: number, rows: PresenceRow[], at: number = Date.now()): LobbySnapshot {
+    const players: string[] = [];
+    let module: string | null = null;
+    for (const row of rows) {
+      module ??= row.module;
+      if (!players.includes(row.player)) players.push(row.player);
+    }
+    players.sort((a, b) => a.localeCompare(b));
+
+    this.bySlot.set(slot, { slot, module, players, updatedAt: at });
+    this.lastUpdate = at;
+
+    const snapshot = this.get();
     for (const listener of this.listeners) {
       try {
-        listener(this.snapshot);
+        listener(snapshot);
       } catch {
         // A wedged subscriber must not stop the others from being notified.
       }
     }
-    return this.snapshot;
+    return snapshot;
   }
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
-  }
-
-  get subscriberCount(): number {
-    return this.listeners.size;
   }
 }
 

@@ -11,9 +11,14 @@ for arg in "$@"; do
   esac
 done
 
-if [ -n "$home" ] && [ ! -d "$home/.VASSAL" ]; then
+# Fill in anything the skeleton provides that this home lacks, without ever
+# overwriting a file that already exists. A plain "seed only if .VASSAL is
+# missing" test would skip seeding entirely once the portal has written a
+# preferences file ahead of the first launch, silently losing the rest of the
+# skeleton.
+if [ -n "$home" ]; then
   mkdir -p "$home"
-  cp -r "$SKEL/.VASSAL" "$home/.VASSAL"
+  cp -rn "$SKEL/.VASSAL" "$home/" 2>/dev/null || true
 fi
 
 exec /opt/java/openjdk/bin/java "$@"

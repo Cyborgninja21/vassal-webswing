@@ -39,7 +39,15 @@ export async function GET(req: Request): Promise<Response> {
         }
       };
 
-      const push = () => send("state", buildPortalState());
+      // Serialise builds so a slow one cannot deliver state out of order.
+      let building: Promise<void> = Promise.resolve();
+      const push = () => {
+        building = building
+          .then(async () => {
+            if (!closed) send("state", await buildPortalState());
+          })
+          .catch(() => undefined);
+      };
 
       push();
 

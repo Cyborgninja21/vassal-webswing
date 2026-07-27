@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { PortalState } from "@/lib/portal-state";
+import type { PortalState, TableView } from "@/lib/portal-state";
 import { ModuleArt } from "@/components/module-art";
 
 /**
@@ -10,9 +10,11 @@ import { ModuleArt } from "@/components/module-art";
  * Server-rendered with a snapshot so the first paint is already correct, then
  * kept current by the SSE stream — there is no polling anywhere in this file.
  */
-export function LiveBoard({ initial }: { initial: PortalState }) {
+export function LiveBoard({ initial, username }: { initial: PortalState; username: string }) {
   const [state, setState] = useState<PortalState>(initial);
   const [streamUp, setStreamUp] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const sourceRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
@@ -37,9 +39,71 @@ export function LiveBoard({ initial }: { initial: PortalState }) {
     };
   }, []);
 
+  /** Seat the player, then hand the browser to Webswing. */
+  async function post(url: string, body?: unknown, key = url) {
+    setBusy(key);
+    setError(null);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: body ? { "content-type": "application/json" } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error ?? `Request failed (${res.status})`);
+        return;
+      }
+      if (data.launchUrl) window.location.href = data.launchUrl;
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function closeTable(t: TableView) {
+    setBusy(`close-${t.slot}`);
+    setError(null);
+    try {
+      const res = await fetch(`/api/tables/${t.slot}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error ?? `Could not close the table (${res.status})`);
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <>
-      <TablesPanel state={state} streamUp={streamUp} />
+      {error ? (
+        <p
+          role="alert"
+          className="mt-6 rounded-lg border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-200"
+        >
+          {error}
+        </p>
+      ) : null}
+
+      <TablesPanel
+        state={state}
+        streamUp={streamUp}
+        busy={busy}
+        username={username}
+        onJoin={(t) => post(`/api/tables/${t.slot}/join`, undefined, `join-${t.slot}`)}
+        onClose={closeTable}
+      />
+
+      <NewTable
+        state={state}
+        busy={busy === "create"}
+        onCreate={(name, modulePath) => post("/api/tables", { name, modulePath }, "create")}
+      />
+
       <CatalogGrid state={state} />
     </>
   );
@@ -54,9 +118,36 @@ function Dot({ ok }: { ok: boolean }) {
   );
 }
 
-function TablesPanel({ state, streamUp }: { state: PortalState; streamUp: boolean }) {
+function Chip({ children, muted }: { children: React.ReactNode; muted?: boolean }) {
+  return (
+    <li
+      className={`rounded px-2 py-0.5 text-xs ${
+        muted
+          ? "border border-dashed border-parchment-500/40 text-parchment-500"
+          : "bg-felt-600/70 text-parchment-300"
+      }`}
+    >
+      {children}
+    </li>
+  );
+}
+
+function TablesPanel({
+  state,
+  streamUp,
+  busy,
+  username,
+  onJoin,
+  onClose,
+}: {
+  state: PortalState;
+  streamUp: boolean;
+  busy: string | null;
+  username: string;
+  onJoin: (t: TableView) => void;
+  onClose: (t: TableView) => void;
+}) {
   const { tables, hall } = state;
-  const nothingHappening = tables.length === 0 && hall.length === 0;
 
   return (
     <section aria-labelledby="tables-heading" className="mt-10">
@@ -69,70 +160,144 @@ function TablesPanel({ state, streamUp }: { state: PortalState; streamUp: boolea
           <span>{streamUp ? "live" : "reconnecting…"}</span>
           <span aria-hidden>·</span>
           <span>
-            {state.lobby.reporting
-              ? `lobby reporting${state.lobby.playerCount ? ` · ${state.lobby.playerCount} online` : ""}`
-              : "lobby has not reported yet"}
+            {state.capacity.used} of {state.capacity.total} tables open
+            {state.lobby.playerCount ? ` · ${state.lobby.playerCount} seated` : ""}
           </span>
         </p>
       </div>
 
-      {nothingHappening ? (
+      {tables.length === 0 ? (
         <p className="plate mt-4 rounded-lg p-6 text-sm text-parchment-500">
-          No one is at a table right now. Open a game below — the first person in
-          creates the table, and everyone else sees it here within a couple of
-          seconds.
+          No tables are open. Start one below — everyone else will see it here
+          within a couple of seconds and can join with one click.
         </p>
       ) : (
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           {tables.map((table) => (
-            <article key={table.id} className="plate rounded-lg p-4">
+            <article key={table.slot} className="plate rounded-lg p-4">
               <div className="flex items-baseline justify-between gap-3">
-                <h3 className="font-display text-lg text-parchment-100">{table.room}</h3>
+                <h3 className="font-display text-lg text-parchment-100">{table.name}</h3>
                 <span className="text-xs uppercase tracking-wide text-brass-400">
                   {table.moduleTitle}
                 </span>
               </div>
-              <ul className="mt-3 flex flex-wrap gap-1.5">
+
+              <ul className="mt-3 flex flex-wrap items-center gap-1.5">
                 {table.players.map((player) => (
-                  <li
-                    key={player}
-                    className="rounded bg-felt-600/70 px-2 py-0.5 text-xs text-parchment-300"
-                  >
-                    {player}
-                  </li>
+                  <Chip key={player}>{player}</Chip>
                 ))}
+                {table.arriving.map((player) => (
+                  <Chip key={`arriving-${player}`} muted>
+                    {player} · joining
+                  </Chip>
+                ))}
+                {table.players.length === 0 && table.arriving.length === 0 ? (
+                  <span className="text-xs text-parchment-500">empty — take a seat</span>
+                ) : null}
               </ul>
-              {table.modulePath ? (
-                <a
-                  href={table.modulePath}
-                  className="mt-4 inline-block text-sm text-brass-400 underline-offset-4 hover:underline"
+
+              <div className="mt-4 flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => onJoin(table)}
+                  disabled={busy === `join-${table.slot}`}
+                  className="rounded bg-brass-600/80 px-3 py-1.5 text-sm text-parchment-100 hover:bg-brass-600 disabled:opacity-50"
                 >
-                  Open {table.moduleTitle} →
-                </a>
-              ) : null}
+                  {busy === `join-${table.slot}` ? "Seating you…" : "Take a seat"}
+                </button>
+                {table.createdBy === username ? (
+                  <button
+                    type="button"
+                    onClick={() => onClose(table)}
+                    disabled={busy === `close-${table.slot}`}
+                    className="text-xs text-parchment-500 underline-offset-4 hover:text-parchment-300 hover:underline disabled:opacity-50"
+                  >
+                    close table
+                  </button>
+                ) : null}
+              </div>
             </article>
           ))}
-
-          {hall.length > 0 ? (
-            <article className="plate rounded-lg p-4">
-              <h3 className="font-display text-lg text-parchment-100">In the hall</h3>
-              <p className="mt-1 text-xs text-parchment-500">
-                Connected to the lobby, not yet at a table.
-              </p>
-              <ul className="mt-3 flex flex-wrap gap-1.5">
-                {hall.map((player) => (
-                  <li
-                    key={player}
-                    className="rounded bg-felt-600/70 px-2 py-0.5 text-xs text-parchment-300"
-                  >
-                    {player}
-                  </li>
-                ))}
-              </ul>
-            </article>
-          ) : null}
         </div>
       )}
+
+      {hall.length > 0 ? (
+        <p className="mt-3 text-xs text-parchment-500">
+          Also connected, not at a table: {hall.join(", ")}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function NewTable({
+  state,
+  busy,
+  onCreate,
+}: {
+  state: PortalState;
+  busy: boolean;
+  onCreate: (name: string, modulePath: string) => void;
+}) {
+  const [name, setName] = useState("");
+  const [modulePath, setModulePath] = useState(state.modules[0]?.path ?? "");
+  const full = state.capacity.used >= state.capacity.total;
+
+  return (
+    <section aria-labelledby="new-table-heading" className="mt-8">
+      <h2 id="new-table-heading" className="sr-only">
+        Open a new table
+      </h2>
+      <form
+        className="plate flex flex-wrap items-end gap-3 rounded-lg p-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (name.trim()) onCreate(name.trim(), modulePath);
+        }}
+      >
+        <div className="grow">
+          <label htmlFor="table-name" className="block text-xs text-parchment-500">
+            Table name
+          </label>
+          <input
+            id="table-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={40}
+            placeholder="Tuesday night Reformation"
+            className="mt-1 w-full rounded border border-brass-400/25 bg-felt-800 px-3 py-1.5 text-sm text-parchment-100 placeholder:text-parchment-500/60 focus:border-brass-400/60 focus:outline-none"
+          />
+        </div>
+        <div>
+          <label htmlFor="table-module" className="block text-xs text-parchment-500">
+            Game
+          </label>
+          <select
+            id="table-module"
+            value={modulePath}
+            onChange={(e) => setModulePath(e.target.value)}
+            className="mt-1 rounded border border-brass-400/25 bg-felt-800 px-3 py-1.5 text-sm text-parchment-100 focus:border-brass-400/60 focus:outline-none"
+          >
+            {state.modules.map((m) => (
+              <option key={m.path} value={m.path}>
+                {m.title}
+              </option>
+            ))}
+          </select>
+        </div>
+        <button
+          type="submit"
+          disabled={busy || full || !name.trim()}
+          className="rounded bg-brass-600/80 px-4 py-1.5 text-sm text-parchment-100 hover:bg-brass-600 disabled:opacity-40"
+        >
+          {busy ? "Opening…" : full ? "All tables in use" : "Open a table"}
+        </button>
+      </form>
+      <p className="mt-2 text-xs text-parchment-500">
+        Opening or joining a table sets VASSAL up for you — the right server, your
+        name, and your seat. In VASSAL, press <strong>Connect</strong> once in Server
+        Controls, then choose your side.
+      </p>
     </section>
   );
 }
