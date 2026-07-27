@@ -107,4 +107,60 @@ export const env = {
     const n = Number.parseInt(optional("VASSAL_TABLE_PORT_BASE", "5050"), 10);
     return Number.isFinite(n) ? n : 5050;
   },
+
+  /**
+   * Ingested module store, shared with the Webswing container. The portal
+   * mounts it read-write; Webswing mounts it **read-only**, so a module's own
+   * code cannot rewrite the store other players load from, and a failing
+   * extension cannot rename itself into `inactive/` for everybody.
+   */
+  get modulesDir(): string {
+    return optional("VASSAL_MODULES_DIR", "/data/modules");
+  },
+
+  /** Ceiling on a single downloaded archive. Enforced on bytes written. */
+  get moduleMaxBytes(): number {
+    return positive("VASSAL_MODULE_MAX_BYTES", 1024 * 1024 * 1024);
+  },
+
+  /** Zip-bomb guards: total inflated size and entry count of one archive. */
+  get moduleMaxUnpackedBytes(): number {
+    return positive("VASSAL_MODULE_MAX_UNPACKED_BYTES", 4 * 1024 * 1024 * 1024);
+  },
+  get moduleMaxEntries(): number {
+    return positive("VASSAL_MODULE_MAX_ENTRIES", 20_000);
+  },
+
+  /**
+   * VASSAL release inside the webswing image. A module saved by a *newer*
+   * VASSAL cannot be opened by an older engine, so ingest refuses it rather
+   * than publishing a game that dies on launch. Keep in step with the
+   * Dockerfile's `VASSAL_VERSION`.
+   */
+  get vassalEngineVersion(): string {
+    return optional("VASSAL_ENGINE_VERSION", "3.7.24");
+  },
+
+  /** Defaults for a newly published module's Webswing app entry. */
+  get moduleDefaultMaxClients(): number {
+    return positive("VASSAL_MODULE_DEFAULT_MAX_CLIENTS", 8);
+  },
+  get moduleDefaultHeap(): string {
+    return optional("VASSAL_MODULE_DEFAULT_HEAP", "2g");
+  },
+
+  /**
+   * Whether the fetcher may resolve to a private address. Off by default: the
+   * portal sits on the stack network and can reach every table lobby and the
+   * Traefik API, so an unguarded fetcher would be an SSRF pivot. Only turn this
+   * on to ingest from a deliberately-hosted internal mirror.
+   */
+  get moduleAllowPrivateFetch(): boolean {
+    return optional("VASSAL_MODULE_ALLOW_PRIVATE_FETCH", "false").toLowerCase() === "true";
+  },
 } as const;
+
+function positive(name: string, fallback: number): number {
+  const n = Number.parseInt(process.env[name] ?? "", 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}

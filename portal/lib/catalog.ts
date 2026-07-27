@@ -1,16 +1,24 @@
+import { moduleRegistry, type ModuleManifest } from "@/lib/modules";
+
 /**
  * The module catalog.
  *
- * Webswing's own `/rest/apps` carries only name/url/icon, and it is gated behind
- * the browser's token exchange rather than the forward-auth header — so the
- * portal cannot use it as a metadata source. Everything richer (era, player
- * count, designer, blurb) therefore lives here, and this list is the portal's
- * source of truth for which modules exist.
+ * Webswing's own `/rest/apps` carries only name/url/icon, and it is gated
+ * behind the browser's token exchange rather than the forward-auth header — so
+ * the portal cannot use it as a metadata source. Everything richer therefore
+ * lives here.
  *
- * Adding a module: add its entry in the vassal-webswing repo (module download +
- * `webswing.config` app entry + icon), then add a matching entry here. `path`
- * must equal the Webswing app path exactly — it is both the launch URL and the
- * key the admin console filters sessions by.
+ * Two kinds of module exist and they are deliberately different:
+ *
+ *  - **Built-in** modules are baked into the container image, pinned by sha256
+ *    at build time, and described by hand below. They are the fallback that
+ *    proves the platform works with the module store empty.
+ *  - **Ingested** modules come from `module.json` manifests on the shared store
+ *    (see lib/modules.ts). Their metadata is whatever VASSAL itself declares —
+ *    we do not invent an era or a designer for a module nobody has curated.
+ *
+ * `path` must equal the Webswing app path exactly: it is both the launch URL
+ * and the key the admin console filters sessions by.
  */
 
 export type Motif = "shield" | "globe" | "trenches";
@@ -22,20 +30,19 @@ export type ModuleMeta = {
    * VASSAL's *internal* module name — not the title, not the .vmod filename.
    * The per-module prefs file is `Prefs.sanitize(vassalModuleName)`, so this
    * must match exactly or identity seeding writes to a file VASSAL never reads
-   * (silently, with no error). Verified against the live prefs directory; note
-   * that it can carry a version ("Twilight Struggle 3.1"), so re-check it when
-   * upgrading a module.
+   * (silently, with no error). For built-ins it is hand-recorded; for ingested
+   * modules it is read straight out of the archive's `moduledata`, which is why
+   * that failure mode cannot recur there.
    */
   vassalModuleName: string;
   title: string;
   subtitle: string;
-  era: string;
-  players: string;
-  playTime: string;
-  designer: string;
-  publisher: string;
   description: string;
   motif: Motif;
+  /** Short labels shown on the tile. Whatever is actually known — never blanks. */
+  facts: string[];
+  /** True for store-backed modules an operator ingested. */
+  ingested: boolean;
   /**
    * Module ids as they appear in the lobby feed. VASSAL reports the module's own
    * name, which need not match `title` — extra spellings can be added here
@@ -44,20 +51,17 @@ export type ModuleMeta = {
   lobbyModuleIds: string[];
 };
 
-export const CATALOG: ModuleMeta[] = [
+export const BUILTIN_CATALOG: ModuleMeta[] = [
   {
     path: "/his",
     vassalModuleName: "Here I Stand (500th Anniversary Edition)",
     title: "Here I Stand",
     subtitle: "500th Anniversary Edition",
-    era: "1517 – 1555",
-    players: "2 – 6",
-    playTime: "3 – 6 hours",
-    designer: "Ed Beach",
-    publisher: "GMT Games",
     description:
       "The Reformation in Europe: six powers contend at once over religion, dynasty, exploration and war. Each power wins differently, so the table is a negotiation as much as a battlefield.",
     motif: "shield",
+    facts: ["2 – 6 players", "1517 – 1555", "3 – 6 hours", "Ed Beach · GMT Games"],
+    ingested: false,
     lobbyModuleIds: ["Here I Stand", "Here I Stand 500th Anniversary Edition"],
   },
   {
@@ -65,14 +69,11 @@ export const CATALOG: ModuleMeta[] = [
     vassalModuleName: "Twilight Struggle 3.1",
     title: "Twilight Struggle",
     subtitle: "Deluxe Edition",
-    era: "1945 – 1989",
-    players: "2",
-    playTime: "2 – 3 hours",
-    designer: "Ananda Gupta & Jason Matthews",
-    publisher: "GMT Games",
     description:
       "The whole Cold War as a card-driven duel. Every card helps someone; the game is deciding whose turn it is to be helped, and where you can afford to lose ground.",
     motif: "globe",
+    facts: ["2 players", "1945 – 1989", "2 – 3 hours", "Gupta & Matthews · GMT Games"],
+    ingested: false,
     lobbyModuleIds: ["Twilight Struggle", "Twilight Struggle Deluxe"],
   },
   {
@@ -80,17 +81,53 @@ export const CATALOG: ModuleMeta[] = [
     vassalModuleName: "Paths of Glory",
     title: "Paths of Glory",
     subtitle: "The First World War",
-    era: "1914 – 1918",
-    players: "2",
-    playTime: "4 – 8 hours",
-    designer: "Ted Raicer",
-    publisher: "GMT Games",
     description:
       "The Great War from the Marne to the armistice. Mobilisation, attrition and the slow grind of replacements — a long game that rewards husbanding what you cannot replace.",
     motif: "trenches",
+    facts: ["2 players", "1914 – 1918", "4 – 8 hours", "Ted Raicer · GMT Games"],
+    ingested: false,
     lobbyModuleIds: ["Paths of Glory"],
   },
 ];
+
+export function formatBytes(n: number): string {
+  if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(1)} GB`;
+  if (n >= 1024 ** 2) return `${Math.round(n / 1024 ** 2)} MB`;
+  return `${Math.max(1, Math.round(n / 1024))} KB`;
+}
+
+/** Present an ingested module using only what VASSAL actually declares. */
+export function metaOf(m: ModuleManifest): ModuleMeta {
+  const facts: string[] = [];
+  if (m.version) facts.push(`version ${m.version}`);
+  if (m.extensions.length) {
+    facts.push(`${m.extensions.length} extension${m.extensions.length === 1 ? "" : "s"}`);
+  }
+  if (m.vassalVersion) facts.push(`saved with VASSAL ${m.vassalVersion}`);
+  facts.push(formatBytes(m.archiveBytes));
+
+  return {
+    path: `/${m.slug}`,
+    vassalModuleName: m.vassalModuleName,
+    title: m.title,
+    subtitle: m.vassalModuleName === m.title ? "" : m.vassalModuleName,
+    description: m.description || "Added to this platform by an operator.",
+    motif: m.motif,
+    facts,
+    ingested: true,
+    lobbyModuleIds: [m.vassalModuleName, m.title],
+  };
+}
+
+/**
+ * Everything a player may open right now: the built-ins plus every *enabled*
+ * ingested module. Synchronous on purpose — the registry keeps an in-memory
+ * snapshot refreshed at boot and after each mutation, so every existing call
+ * site stays a plain lookup.
+ */
+export function allModules(): ModuleMeta[] {
+  return [...BUILTIN_CATALOG, ...moduleRegistry.enabled().map(metaOf)];
+}
 
 const normalise = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
 
@@ -102,14 +139,15 @@ const normalise = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
 export function findModuleByLobbyId(lobbyModuleId: string): ModuleMeta | null {
   const target = normalise(lobbyModuleId);
   if (!target) return null;
-  for (const mod of CATALOG) {
+  const catalog = allModules();
+  for (const mod of catalog) {
     const names = [mod.title, `${mod.title} ${mod.subtitle}`, ...mod.lobbyModuleIds];
     if (names.some((n) => normalise(n) === target)) return mod;
   }
   // Fall back to a prefix match: modules often append their version to the id.
-  return CATALOG.find((mod) => target.startsWith(normalise(mod.title))) ?? null;
+  return catalog.find((mod) => target.startsWith(normalise(mod.title))) ?? null;
 }
 
 export function findModuleByPath(path: string): ModuleMeta | null {
-  return CATALOG.find((m) => m.path === path) ?? null;
+  return allModules().find((m) => m.path === path) ?? null;
 }

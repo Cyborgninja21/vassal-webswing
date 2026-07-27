@@ -1,4 +1,4 @@
-import { CATALOG, findModuleByPath } from "@/lib/catalog";
+import { allModules, findModuleByPath } from "@/lib/catalog";
 import { HALL_SLOT, lobbyStore } from "@/lib/lobby-state";
 import { adminConsole } from "@/lib/admin-console";
 import { env } from "@/lib/env";
@@ -36,13 +36,12 @@ export type ModuleView = {
   path: string;
   title: string;
   subtitle: string;
-  era: string;
-  players: string;
-  playTime: string;
-  designer: string;
-  publisher: string;
   description: string;
   motif: string;
+  /** Short labels for the tile — whatever is known about this module. */
+  facts: string[];
+  /** True for operator-ingested modules; built-ins are false. */
+  ingested: boolean;
   activeUsers: string[];
 };
 
@@ -127,17 +126,14 @@ export async function buildPortalState(
     };
   });
 
-  const modules: ModuleView[] = CATALOG.map((mod) => ({
+  const modules: ModuleView[] = allModules().map((mod) => ({
     path: mod.path,
     title: mod.title,
     subtitle: mod.subtitle,
-    era: mod.era,
-    players: mod.players,
-    playTime: mod.playTime,
-    designer: mod.designer,
-    publisher: mod.publisher,
     description: mod.description,
     motif: mod.motif,
+    facts: mod.facts,
+    ingested: mod.ingested,
     activeUsers: [...(usersByPath.get(mod.path) ?? [])].sort((a, b) => a.localeCompare(b)),
   }));
 
