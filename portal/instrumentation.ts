@@ -7,4 +7,6 @@ export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
   const { adminConsole } = await import("@/lib/admin-console");
   adminConsole.start();
+  const { startStatsLogger } = await import("@/lib/stats");
+  startStatsLogger();
 }
