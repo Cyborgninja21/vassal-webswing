@@ -67,6 +67,19 @@ class AdminConsoleClient {
   private listeners = new Set<Listener>();
   /** correlationId → resolver, for the request/response half of saveConfig. */
   private pendingSaves = new Map<string, (r: { ok: boolean; error: string | null }) => void>();
+  /**
+   * Session-pool ids, from `getServerInfo`.
+   *
+   * An application's configuration is split across two providers inside
+   * Webswing: the path-level half (`name`, `enabled`, `maxClients`, security)
+   * belongs to the server config, and **`swingConfig` belongs to the session
+   * pool** — `LocalSessionPoolConfigurationProvider.saveConfiguration` is what
+   * merges it back into the entry. A `saveConfig` that carries `swingConfig`
+   * inside `serverConfig` is accepted and silently drops it, leaving an app
+   * that resolves but answers "Access to this application is forbidden".
+   * So every publish needs the pool ids to address the second half.
+   */
+  private sessionPoolIds: string[] = [];
 
   private state: AdminConsoleState = {
     sessions: null,
@@ -169,6 +182,7 @@ class AdminConsoleClient {
         this.send({ handshake: { secretMessage: await this.handshakeToken() } });
         this.backoff = BACKOFF_MIN_MS;
         this.setState({ connected: true, lastError: null });
+        this.send({ getServerInfo: {} });
         this.poll();
         this.pollTimer = setInterval(() => this.poll(), POLL_INTERVAL_MS);
       } catch (e) {
@@ -191,6 +205,15 @@ class AdminConsoleClient {
     }
   }
 
+  /** Wait briefly for `getServerInfo` to land, then hand back the pool ids. */
+  private async poolIds(): Promise<string[]> {
+    for (let i = 0; i < 20 && !this.sessionPoolIds.length; i += 1) {
+      if (i === 0) this.send({ getServerInfo: {} });
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    return this.sessionPoolIds;
+  }
+
   /**
    * Publish (or re-publish) an application path.
    *
@@ -199,17 +222,26 @@ class AdminConsoleClient {
    * write `synchronized` and reloads inline afterwards. Writing the file from
    * outside would race the 1 s config poller and could be read half-written.
    *
+   * The two halves go in one message: `serverConfig` carries the path-level
+   * fields, and `appConfigs` carries `swingConfig` **per session pool** —
+   * see `sessionPoolIds` for why splitting it is not optional.
+   *
    * `createConfig` deliberately materialises the entry `enabled:false` first so
    * a half-built app never initialises; the save that follows carries the real
    * configuration, `enabled` included.
    */
   async publishApp(
     path: string,
-    config: Record<string, unknown>,
+    pathConfig: Record<string, unknown>,
+    swingConfig: Record<string, unknown>,
     opts: { create?: boolean } = {},
   ): Promise<{ ok: boolean; error: string | null }> {
     if (this.ws?.readyState !== WebSocket.OPEN) {
       return { ok: false, error: "The Webswing admin channel is not connected." };
+    }
+    const pools = await this.poolIds();
+    if (!pools.length) {
+      return { ok: false, error: "Webswing reported no session pools to configure." };
     }
     if (opts.create !== false) {
       this.send({ createApp: { path } });
@@ -223,9 +255,13 @@ class AdminConsoleClient {
     this.send({
       saveConfig: {
         path,
-        // GlobalUrlHandler.saveConfig unwraps a top-level `data` object.
-        serverConfig: Buffer.from(JSON.stringify({ data: config }), "utf8"),
-        saveAppConfigs: false,
+        // Both handlers unwrap a top-level `data` object.
+        serverConfig: Buffer.from(JSON.stringify({ data: pathConfig }), "utf8"),
+        saveAppConfigs: true,
+        appConfigs: pools.map((sessionPoolId) => ({
+          sessionPoolId,
+          appConfig: Buffer.from(JSON.stringify({ data: swingConfig }), "utf8"),
+        })),
         correlationId,
       },
     });
@@ -239,9 +275,15 @@ class AdminConsoleClient {
    */
   async unpublishApp(
     path: string,
-    config: Record<string, unknown>,
+    pathConfig: Record<string, unknown>,
+    swingConfig: Record<string, unknown>,
   ): Promise<{ ok: boolean; error: string | null }> {
-    const disabled = await this.publishApp(path, { ...config, enabled: false }, { create: false });
+    const disabled = await this.publishApp(
+      path,
+      { ...pathConfig, enabled: false },
+      swingConfig,
+      { create: false },
+    );
     if (!disabled.ok) return disabled;
     // The reload interval is 1 s by default; one beat past it is enough.
     await new Promise((r) => setTimeout(r, 1_500));
@@ -279,6 +321,12 @@ class AdminConsoleClient {
     } catch (e) {
       this.setState({ lastError: `decode failed: ${(e as Error).message}` });
       return;
+    }
+
+    const serverInfo = msg.serverInfo as { spInfos?: { id?: string }[] } | undefined;
+    if (serverInfo?.spInfos) {
+      const ids = serverInfo.spInfos.map((p) => String(p.id ?? "")).filter(Boolean);
+      if (ids.length) this.sessionPoolIds = ids;
     }
 
     const saveResult = msg.saveConfigResult as
