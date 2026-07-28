@@ -1,5 +1,5 @@
 import { allModules, findModuleByPath } from "@/lib/catalog";
-import { HALL_SLOT, lobbyStore } from "@/lib/lobby-state";
+import { lobbyStore } from "@/lib/lobby-state";
 import { adminConsole } from "@/lib/admin-console";
 import { env } from "@/lib/env";
 import { tableStore } from "@/lib/tables";
@@ -8,7 +8,8 @@ import { tableStore } from "@/lib/tables";
  * The single shape the UI renders, composed from three sources:
  *
  *  - the table registry — names, module, who created them (portal-owned);
- *  - the per-table lobby pushes — who is actually sitting at each table;
+ *  - the lobby's status push — who is actually sitting in which room, and so
+ *    at which table (the room name carries the table number);
  *  - Webswing's admin console — who has a Player JVM running, which catches
  *    people who have launched but not yet pressed Connect.
  *
@@ -79,7 +80,9 @@ export async function buildPortalState(
   const registry = await tableStore.list();
 
   const playersBySlot = new Map<number, string[]>();
-  for (const slot of lobby.slots) playersBySlot.set(slot.slot, slot.players);
+  for (const room of lobby.rooms) {
+    if (room.table !== null) playersBySlot.set(room.table, room.players);
+  }
 
   const usersByPath = new Map<string, Set<string>>();
   for (const session of admin.sessions ?? []) {
@@ -150,9 +153,9 @@ export async function buildPortalState(
       error: admin.lastError,
     },
     tables,
-    hall: playersBySlot.get(HALL_SLOT) ?? [],
+    hall: lobbyStore.hall(),
     modules,
-    capacity: { used: tables.length, total: env.tableSlots },
+    capacity: { used: tables.length, total: env.maxTables },
     seats: { used: (admin.sessions ?? []).length, total: env.maxConcurrentSeats },
     viewer,
   };

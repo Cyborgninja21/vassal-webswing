@@ -2,6 +2,7 @@ import { currentIdentity } from "@/lib/identity";
 import { findModuleByPath } from "@/lib/catalog";
 import { tableStore } from "@/lib/tables";
 import { seedPlayerPrefs } from "@/lib/vassal-prefs";
+import { openGamesRefusal } from "@/lib/seating";
 import { adminConsole } from "@/lib/admin-console";
 
 export const runtime = "nodejs";
@@ -29,6 +30,11 @@ export async function POST(req: Request): Promise<Response> {
   const modulePath = typeof body.modulePath === "string" ? body.modulePath : "";
   const mod = findModuleByPath(modulePath);
   if (!mod) return Response.json({ error: "Unknown game." }, { status: 400 });
+
+  // Solo play starts a JVM too, so it counts against the same per-person cap —
+  // otherwise the cap would be one click away from being bypassed.
+  const refusal = openGamesRefusal(identity.username, modulePath);
+  if (refusal) return Response.json({ error: refusal }, { status: 409 });
 
   const id = await tableStore.identity(identity.username);
   await seedPlayerPrefs({

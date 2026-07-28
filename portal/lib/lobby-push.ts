@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { env } from "@/lib/env";
-import { HALL_SLOT, lobbyStore, parseStatus } from "@/lib/lobby-state";
+import { lobbyStore, parseStatus } from "@/lib/lobby-state";
 
 /**
  * Shared handling for VASSAL's StatusReporter push.
@@ -13,6 +13,11 @@ import { HALL_SLOT, lobbyStore, parseStatus } from "@/lib/lobby-state";
  *  - It cannot send headers, so the shared secret has to live in the URL path.
  *    The token is compared in constant time and is the only thing standing
  *    between this endpoint and anything else on the stack network.
+ *
+ * There is one lobby and therefore one push URL. It used to be nine — a shared
+ * hall plus `/t1/`…`/t8/`, one per table container — with the table number
+ * taken from the path. Tables are rooms now, so attribution comes from the
+ * payload instead (see lib/lobby-state.ts).
  */
 
 function tokenMatches(candidate: string): boolean {
@@ -22,24 +27,8 @@ function tokenMatches(candidate: string): boolean {
   return timingSafeEqual(expected, given);
 }
 
-/** `t3` → 3. The shared hall (no table segment) is slot 0. */
-function parseSlot(segment: string | null): number | null {
-  if (segment === null) return HALL_SLOT;
-  const m = /^t(\d{1,2})$/.exec(segment);
-  if (!m) return null;
-  const slot = Number.parseInt(m[1], 10);
-  return slot >= 1 && slot <= env.tableSlots ? slot : null;
-}
-
-export async function lobbyPushResponse(
-  req: Request,
-  token: string,
-  tableSegment: string | null,
-): Promise<Response> {
+export async function lobbyPushResponse(req: Request, token: string): Promise<Response> {
   if (!tokenMatches(token)) return new Response("not found", { status: 404 });
-
-  const slot = parseSlot(tableSegment);
-  if (slot === null) return new Response("not found", { status: 404 });
 
   let status = "";
   try {
@@ -51,7 +40,7 @@ export async function lobbyPushResponse(
     status = "";
   }
 
-  lobbyStore.update(slot, parseStatus(status));
+  lobbyStore.update(parseStatus(status));
 
   // 201, exactly — see above.
   return new Response(null, { status: 201 });

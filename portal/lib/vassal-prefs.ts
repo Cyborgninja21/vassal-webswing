@@ -39,8 +39,6 @@ const PREFS_SUBDIR = path.join(".VASSAL", "prefs");
 const GLOBAL_PREFS = "V_Global";
 
 export type TableServer = {
-  /** Slot number; also the cosmetic label VASSAL shows in its own server list. */
-  slot: number;
   host: string;
   port: number;
 };
@@ -119,8 +117,9 @@ export function tableServerProperties(server: TableServer): Record<string, strin
   return {
     // Deliberately NOT the user's table name: this string is re-encoded through
     // two of VASSAL's own escaping layers, so it stays fixed and ASCII-safe.
-    // Human-readable table names live in the portal only.
-    description: `Table ${server.slot}`,
+    // It is also the same for everybody now — there is one lobby, and which
+    // table you are at is the room, not the server.
+    description: "Homelab",
     nodeHost: server.host,
     nodePort: String(server.port),
     type: "private",
