@@ -22,8 +22,8 @@ function quoteArg(p: string): string {
   return `"${p}"`;
 }
 
-export function appConfigFor(m: ModuleManifest): Record<string, unknown> {
-  const modulePath = path.posix.join(env.modulesDir, m.slug, m.moduleFile);
+/** The path-level half: what `SecuredPathConfig` owns. */
+export function pathConfigFor(m: ModuleManifest): Record<string, unknown> {
   return {
     path: `/${m.slug}`,
     name: m.title,
@@ -31,34 +31,50 @@ export function appConfigFor(m: ModuleManifest): Record<string, unknown> {
     maxClients: m.maxClients,
     sessionMode: "CONTINUE_FOR_USER",
     allowStealSession: false,
-    swingConfig: {
-      launcherType: "Desktop",
-      launcherConfig: {
-        mainClass: "VASSAL.launch.Player",
-        args: `--load ${quoteArg(modulePath)}`,
-      },
-      vmArgs:
-        `-Xmx${m.heap} -Duser.home=/data/users/\${user} ` +
-        `-Dwebswing.trustedFontDirs=/usr/share/fonts`,
-      classPathEntries: ["/opt/vassal/lib/Vengine.jar"],
-      jreExecutable: "/opt/vassal/bin/vassal-java",
-      homeDir: "/data/users/${user}",
-      directdraw: true,
-      isolatedFs: true,
-      transferDir: "/data/transfers/${user}",
-      allowUpload: true,
-      allowDownload: true,
-      allowDelete: true,
-      swingSessionTimeout: 14400,
-      timeoutIfInactive: false,
-      fontConfig: {
-        dialog: `${FONTS}/DejaVuSans.ttf`,
-        "dialog bold": `${FONTS}/DejaVuSans-Bold.ttf`,
-        dialoginput: `${FONTS}/DejaVuSansMono.ttf`,
-        sansserif: `${FONTS}/DejaVuSans.ttf`,
-        serif: `${FONTS}/DejaVuSerif.ttf`,
-        monospaced: `${FONTS}/DejaVuSansMono.ttf`,
-      },
+  };
+}
+
+/**
+ * The session-pool half: what actually launches VASSAL.
+ *
+ * This must NOT be folded into the path config. Webswing splits an
+ * application's configuration across two providers, and the server-config
+ * provider silently discards `swingConfig` — producing an app path that
+ * resolves but answers "Access to this application is forbidden", because
+ * there is no launcher behind it.
+ *
+ * `${user}` is Webswing's own substitution, resolved per session from the
+ * authenticated username; it must survive into the JSON verbatim.
+ */
+export function swingConfigFor(m: ModuleManifest): Record<string, unknown> {
+  const modulePath = path.posix.join(env.modulesDir, m.slug, m.moduleFile);
+  return {
+    launcherType: "Desktop",
+    launcherConfig: {
+      mainClass: "VASSAL.launch.Player",
+      args: `--load ${quoteArg(modulePath)}`,
+    },
+    vmArgs:
+      `-Xmx${m.heap} -Duser.home=/data/users/\${user} ` +
+      `-Dwebswing.trustedFontDirs=/usr/share/fonts`,
+    classPathEntries: ["/opt/vassal/lib/Vengine.jar"],
+    jreExecutable: "/opt/vassal/bin/vassal-java",
+    homeDir: "/data/users/${user}",
+    directdraw: true,
+    isolatedFs: true,
+    transferDir: "/data/transfers/${user}",
+    allowUpload: true,
+    allowDownload: true,
+    allowDelete: true,
+    swingSessionTimeout: 14400,
+    timeoutIfInactive: false,
+    fontConfig: {
+      dialog: `${FONTS}/DejaVuSans.ttf`,
+      "dialog bold": `${FONTS}/DejaVuSans-Bold.ttf`,
+      dialoginput: `${FONTS}/DejaVuSansMono.ttf`,
+      sansserif: `${FONTS}/DejaVuSans.ttf`,
+      serif: `${FONTS}/DejaVuSerif.ttf`,
+      monospaced: `${FONTS}/DejaVuSansMono.ttf`,
     },
   };
 }
@@ -69,11 +85,11 @@ export async function publishModule(
   m: ModuleManifest,
   opts: { create?: boolean } = {},
 ): Promise<PublishResult> {
-  return adminConsole.publishApp(`/${m.slug}`, appConfigFor(m), opts);
+  return adminConsole.publishApp(`/${m.slug}`, pathConfigFor(m), swingConfigFor(m), opts);
 }
 
 export async function unpublishModule(m: ModuleManifest): Promise<PublishResult> {
-  return adminConsole.unpublishApp(`/${m.slug}`, appConfigFor(m));
+  return adminConsole.unpublishApp(`/${m.slug}`, pathConfigFor(m), swingConfigFor(m));
 }
 
 /**
