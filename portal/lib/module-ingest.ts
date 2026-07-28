@@ -134,6 +134,21 @@ export async function ingestModule(input: IngestInput): Promise<IngestResult> {
       }
     }
 
+    // Short-circuit an exact re-ingest. The slug collision below catches this
+    // too, but only after unpacking — and a repeat of a 300 MB download just to
+    // be told "already published" is a bad trade. Seen for real: the drill's
+    // POST was retried and spent a second full download to reach the 409.
+    const already = moduleRegistry
+      .snapshot()
+      .find((m) => m.archiveSha256 === archiveSha);
+    if (already) {
+      throw new IngestError(
+        `That exact archive is already published as "${already.title}" at /${already.slug}.`,
+        [`sha256 ${archiveSha}`],
+        409,
+      );
+    }
+
     // ── c. identify ─────────────────────────────────────────────────────────
     if (!(await isZip(archive))) {
       throw new IngestError(
