@@ -6,16 +6,19 @@ import { env } from "@/lib/env";
 /**
  * The table registry.
  *
- * A "table" is one `VASSAL.chat.node.Server` process. VASSAL gives a client no
- * way to choose a room — `setDefaultRoomName()` is dead code in 3.7.24 and the
- * launcher has no room argument — so every client lands in "Main Room" of
- * whichever server its preferences name. Therefore **the server is the table**,
- * and picking a table means pointing the player's prefs at a different port.
+ * A "table" is a **named room inside the one lobby process**. It used to be a
+ * whole `VASSAL.chat.node.Server` container of its own, from a fixed pool of
+ * eight: a stock client always lands in "Main Room", so the server had to be
+ * the table. The engine patch that joins a named room removed that constraint,
+ * and rooms are created on demand by the server, so nothing has to be
+ * pre-provisioned and there is no pool to run out of.
  *
- * The lobby processes are a fixed pool declared in compose (`vassal-table-1..N`
- * on ports 5051..505N), not spawned on demand: a dynamic spawner would need the
- * docker socket, which is root on the host, to save ~25 MB per idle slot.
- * Allocating a table is therefore just claiming a free slot.
+ * `slot` is therefore just the table's number — a small stable integer used in
+ * portal URLs. It is **not** a container index. It does two jobs:
+ *
+ *  - it keys the registry and the `/watch/N` route, and
+ *  - it is embedded in the VASSAL room name by {@link roomNameFor}, which is
+ *    how the lobby feed's rows are attributed back to a table.
  *
  * Registry state is a small JSON file on the shared NFS volume. It holds names
  * and ownership only — never occupancy, which always comes live from the lobby
@@ -23,6 +26,7 @@ import { env } from "@/lib/env";
  */
 
 export type Table = {
+  /** Table number. A portal identifier, not a container slot — see above. */
   slot: number;
   name: string;
   /** Webswing app path, e.g. "/his". */
@@ -71,12 +75,26 @@ const IDLE_REAP_MS = 15 * 60 * 1000;
 /** ...but never before this much time has passed, so a new table can fill up. */
 const CREATION_GRACE_MS = 5 * 60 * 1000;
 
-export function slotHost(slot: number): string {
-  return env.tableHostPattern.replace("{n}", String(slot));
+/**
+ * The VASSAL room name for a table.
+ *
+ * The trailing `(#n)` is load-bearing, not decoration. With every table sharing
+ * one lobby, room names live in a single namespace per module, and the status
+ * feed reports rooms by name only — so the number is both what keeps two tables
+ * called "Sunday game" apart and what maps a feed row back to a registry row.
+ * `sanitizeTableName` rejects `#`, so a player cannot type a name that collides
+ * with the suffix.
+ */
+export function roomNameFor(table: Pick<Table, "slot" | "name">): string {
+  return `${table.name} (#${table.slot})`;
 }
 
-export function slotPort(slot: number): number {
-  return env.tablePortBase + slot;
+/** Inverse of {@link roomNameFor}; null for rooms the portal did not name. */
+export function tableNumberFromRoom(room: string): number | null {
+  const m = /\(#(\d+)\)\s*$/.exec(room);
+  if (!m) return null;
+  const n = Number.parseInt(m[1], 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 class TableStore {
@@ -142,9 +160,9 @@ class TableStore {
   }
 
   /**
-   * Claim the lowest free slot. `occupied` is the set of slots the lobby feed
-   * currently reports players in — a slot can never be reused under a live game
-   * even if the registry thinks it is closed.
+   * Claim the lowest free table number. `occupied` is the set of numbers the
+   * lobby feed currently reports players in — a number can never be reused
+   * under a live game even if the registry thinks the table is closed.
    */
   async create(
     input: {
@@ -161,7 +179,7 @@ class TableStore {
       for (const t of state.tables) if (t.closedAt === null) taken.add(t.slot);
 
       let slot = 0;
-      for (let i = 1; i <= env.tableSlots; i += 1) {
+      for (let i = 1; i <= env.maxTables; i += 1) {
         if (!taken.has(i)) {
           slot = i;
           break;
@@ -169,7 +187,7 @@ class TableStore {
       }
       if (!slot) {
         throw new Error(
-          `all ${env.tableSlots} tables are in use — close one, or raise VASSAL_TABLE_SLOTS`,
+          `${env.maxTables} tables are already open — close one, or raise VASSAL_MAX_TABLES`,
         );
       }
 
@@ -296,7 +314,11 @@ class TableStore {
 const globalForTables = globalThis as unknown as { __vassalTableStore?: TableStore };
 export const tableStore: TableStore = (globalForTables.__vassalTableStore ??= new TableStore());
 
-/** Table names are shown in the portal only, but keep them boring and short. */
+/**
+ * Table names now reach VASSAL — {@link roomNameFor} turns one into a room
+ * name — so keep them boring, short, and free of `#`, which would let a player
+ * forge the table-number suffix the feed is attributed by.
+ */
 export function sanitizeTableName(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   const name = raw.trim().replace(/\s+/g, " ");

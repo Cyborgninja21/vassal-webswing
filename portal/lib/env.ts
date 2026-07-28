@@ -98,20 +98,50 @@ export const env = {
   },
 
   /**
-   * Table lobbies are a fixed pool declared in compose, one container each.
-   * Slot n is `vassal-table-n` on port (base + n); slot 0 is the shared hall.
+   * The one VASSAL lobby process. Every table is a named room inside it.
+   *
+   * There used to be a pool of eight `vassal-table-N` containers, one per
+   * table, because a stock VASSAL client always lands in "Main Room" — so the
+   * server had to *be* the table. The engine patch that joins a named room
+   * retired that constraint; the pool outlived it until this change. Rooms are
+   * created on demand by the server, so the table count is now a portal-side
+   * number rather than a container count.
    */
-  get tableSlots(): number {
-    const n = Number.parseInt(optional("VASSAL_TABLE_SLOTS", "8"), 10);
-    return Number.isFinite(n) && n > 0 && n <= 64 ? n : 8;
+  get lobbyHost(): string {
+    return optional("VASSAL_LOBBY_HOST", "vassal-lobby");
   },
-  get tableHostPattern(): string {
-    return optional("VASSAL_TABLE_HOST_PATTERN", "vassal-table-{n}");
+  get lobbyPort(): number {
+    const n = Number.parseInt(optional("VASSAL_LOBBY_PORT", "5050"), 10);
+    return Number.isFinite(n) && n > 0 && n < 65536 ? n : 5050;
   },
+
+  /**
+   * Ceiling on simultaneously open tables. Not a resource limit — the binding
+   * constraint is `maxConcurrentSeats` below, since a table with nobody in it
+   * costs nothing — just a guard against a runaway client filling the registry.
+   */
+  get maxTables(): number {
+    const n = Number.parseInt(optional("VASSAL_MAX_TABLES", "64"), 10);
+    return Number.isFinite(n) && n > 0 && n <= 512 ? n : 64;
+  },
+
   /** Default seat cap for a new table; the host can lower or raise it. */
   get defaultMaxSeats(): number {
     const n = Number.parseInt(optional("VASSAL_DEFAULT_MAX_SEATS", "6"), 10);
     return Number.isFinite(n) && n > 0 ? n : 6;
+  },
+
+  /**
+   * How many *different* games one person may have open at once.
+   *
+   * Each is a ~500 MB JVM that outlives the browser tab, so without this one
+   * person clicking through the catalogue can consume the whole stack ceiling.
+   * Re-opening the same module is not affected: Webswing's `CONTINUE_FOR_USER`
+   * hands back the existing session rather than starting a second one.
+   */
+  get maxSeatsPerUser(): number {
+    const n = Number.parseInt(optional("VASSAL_MAX_SEATS_PER_USER", "3"), 10);
+    return Number.isFinite(n) && n > 0 ? n : 3;
   },
 
   /**
@@ -122,11 +152,6 @@ export const env = {
   get maxConcurrentSeats(): number {
     const n = Number.parseInt(optional("VASSAL_MAX_CONCURRENT_SEATS", "16"), 10);
     return Number.isFinite(n) && n > 0 ? n : 16;
-  },
-
-  get tablePortBase(): number {
-    const n = Number.parseInt(optional("VASSAL_TABLE_PORT_BASE", "5050"), 10);
-    return Number.isFinite(n) ? n : 5050;
   },
 
   /**

@@ -2,7 +2,7 @@ import { currentIdentity } from "@/lib/identity";
 import { findModuleByPath } from "@/lib/catalog";
 import { lobbyStore } from "@/lib/lobby-state";
 import { sanitizeTableName, tableStore } from "@/lib/tables";
-import { seatPlayer } from "@/lib/seating";
+import { openGamesRefusal, seatPlayer } from "@/lib/seating";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,7 +32,11 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "Unknown game." }, { status: 400 });
   }
 
-  const occupied = lobbyStore.occupiedSlots();
+  // Opening a table also seats you at it, so it costs a JVM like any other seat.
+  const refusal = openGamesRefusal(identity.username, modulePath);
+  if (refusal) return Response.json({ error: refusal }, { status: 409 });
+
+  const occupied = lobbyStore.occupiedTables();
   await tableStore.reap(occupied);
 
   try {
