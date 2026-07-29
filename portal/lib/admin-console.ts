@@ -88,6 +88,8 @@ class AdminConsoleClient {
   private byPath = new Map<string, WebswingSession[]>();
   /** app path → Webswing's own latency/EDT/bandwidth numbers for that app. */
   private statsByPath = new Map<string, WebswingStats>();
+  /** Instances we have already asked to record statistics. */
+  private statsEnabled = new Set<string>();
   private listeners = new Set<Listener>();
   /** correlationId → resolver, for the request/response half of saveConfig. */
   private pendingSaves = new Map<string, (r: { ok: boolean; error: string | null }) => void>();
@@ -437,6 +439,29 @@ class AdminConsoleClient {
             : null,
       } satisfies WebswingSession;
     });
+
+    // Statistics are opt-in per instance: the metrics exist, but the app only
+    // records them once told to. Ask once per instance — the toggle is an
+    // event, not a subscription, so a fresh JVM needs its own.
+    for (const s of running) {
+      if (s.instanceId && !this.statsEnabled.has(s.instanceId)) {
+        this.statsEnabled.add(s.instanceId);
+        this.send({
+          toggleStatisticsLogging: {
+            path: s.applicationPath,
+            instanceId: s.instanceId,
+            enabled: true,
+          },
+        });
+      }
+    }
+    // Forget instances that are gone, so a recycled id is re-enabled.
+    const live = new Set(running.map((s) => s.instanceId));
+    for (const id of this.statsEnabled) {
+      if (!live.has(id) && this.byPath.get(key)?.some((s) => s.instanceId === id)) {
+        this.statsEnabled.delete(id);
+      }
+    }
 
     this.byPath.set(key, running);
     this.setState({
