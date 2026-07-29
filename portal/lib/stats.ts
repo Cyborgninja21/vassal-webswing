@@ -63,23 +63,26 @@ export function startStatsLogger(): void {
           `modulebytes=${moduleRegistry.bytesOnDisk()}`,
       );
 
-      // One line per app that actually has something running. An app with no
-      // sessions has no meaningful latency, and emitting zeroes for it would
-      // drag every dashboard average toward nothing.
-      for (const path of adminConsole.statPaths()) {
-        const s = adminConsole.statsFor(path);
-        if (!s || s.running < 1) continue;
-        const fields = LATENCY_METRICS.filter((m) => m in s.metrics)
-          .map((m) => `${m}=${fmt(s.metrics[m])}`)
+      // One line per live session. Per session rather than per app on purpose:
+      // "the platform is slow" is not actionable, "this player's session has
+      // 400 ms of server rendering" is. Sessions with statistics not yet
+      // switched on are skipped rather than logged as zeroes.
+      for (const sess of adminConsole.getState().sessions ?? []) {
+        const fields = LATENCY_METRICS.filter((m) => m in sess.metrics)
+          .map((m) => `${m}=${fmt(sess.metrics[m])}`)
           .join(" ");
+        if (!fields) continue;
         console.log(
-          `vassal_webswing_perf app=${path} running=${s.running} ` +
-            `connected=${s.connected} ${fields}`.trimEnd(),
+          `vassal_webswing_perf app=${sess.applicationPath} user=${sess.user} ` +
+            `connected=${sess.connected} ${fields}`,
         );
         // Webswing raises these itself (latency over 700 ms, EDT blocked over
-        // 10 s, heap over 80 %) — it is a real signal and nothing was reading it.
-        for (const w of s.warnings) {
-          console.warn(`vassal_webswing_warning app=${path} warning="${w}"`);
+        // 10 s, heap over 80 %) — a real signal nothing was reading.
+        for (const w of sess.warnings) {
+          console.warn(
+            `vassal_webswing_warning app=${sess.applicationPath} ` +
+              `user=${sess.user} warning="${w}"`,
+          );
         }
       }
     } catch {

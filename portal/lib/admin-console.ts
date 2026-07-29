@@ -37,28 +37,21 @@ export type WebswingSession = {
   connected: boolean;
   startedAt: number | null;
   disconnectedSince: number | null;
-};
-
-/**
- * Webswing's own per-application performance numbers.
- *
- * It has always measured these — `DefaultStatisticsLogger` aggregates them
- * every `webswing.stats.interval` (10 s) with warning thresholds at 700 ms
- * latency and 10 s of blocked EDT — but nothing was asking for them, so the
- * only view of "why does it feel slow" was guesswork from outside.
- *
- * The split is what makes it useful: `latencyServerRendering` (Swing repaint +
- * encode), `latencyNetworkTransfer` (the wire) and `latencyClientRendering`
- * (the browser) add up to `latency`, so a slow session says *which part* is
- * slow instead of just being slow.
- */
-export type WebswingStats = {
-  /** Metric name → most recent aggregated value. Units are ms except sizes. */
+  /**
+   * Webswing's own numbers for THIS session — latency split into its server /
+   * network / browser parts, blocked-EDT seconds, heap, bandwidth.
+   *
+   * Empty until statistics logging is switched on for the instance: every
+   * `logStatValue` in `SwingInstanceImpl` sits behind
+   * `isStatisticsLoggingEnabled()`, and the latency numbers additionally need
+   * the browser to be returning render timings in its ack. Both follow from
+   * the toggle below, so an empty map on a connected session means the toggle
+   * has not landed yet rather than "the session is fast".
+   */
   metrics: Record<string, number>;
-  /** Warnings Webswing raised itself, e.g. latency over threshold. */
+  /** Warnings Webswing raised itself (latency > 700 ms, EDT blocked > 10 s…). */
   warnings: string[];
-  running: number;
-  connected: number;
+  statisticsLoggingEnabled: boolean;
 };
 
 export type AdminConsoleState = {
@@ -68,6 +61,23 @@ export type AdminConsoleState = {
   lastError: string | null;
   updatedAt: number | null;
 };
+
+/**
+ * `repeated MetricMsgOutProto metrics` → a plain map.
+ *
+ * Each entry is {key, value, aggregatedCount}; `key` is the metric name
+ * (`latencyServerRendering`, `edtThreadBlockedForSeconds`, …) and the value is
+ * already aggregated over the stats interval, so the last one wins.
+ */
+function metricsOf(raw: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!Array.isArray(raw)) return out;
+  for (const m of raw) {
+    const e = m as { key?: unknown; value?: unknown };
+    if (typeof e.key === "string" && typeof e.value === "number") out[e.key] = e.value;
+  }
+  return out;
+}
 
 const HANDSHAKE_SUBJECT = "handshake";
 const POLL_INTERVAL_MS = 5_000;
@@ -86,10 +96,6 @@ class AdminConsoleClient {
   private backoff = BACKOFF_MIN_MS;
   private started = false;
   private byPath = new Map<string, WebswingSession[]>();
-  /** app path → Webswing's own latency/EDT/bandwidth numbers for that app. */
-  private statsByPath = new Map<string, WebswingStats>();
-  /** Instances we have already asked to record statistics. */
-  private statsEnabled = new Set<string>();
   private listeners = new Set<Listener>();
   /** correlationId → resolver, for the request/response half of saveConfig. */
   private pendingSaves = new Map<string, (r: { ok: boolean; error: string | null }) => void>();
@@ -227,22 +233,11 @@ class AdminConsoleClient {
    */
   private poll(): void {
     for (const mod of allModules()) {
+      // The session objects this returns already carry each instance's
+      // metrics, warnings and statistics-logging state, so one request answers
+      // both "who is playing" and "how is it performing".
       this.send({ getSwingSessions: { path: mod.path, correlationId: mod.path } });
-      // Same round trip, second question: how is that app actually performing?
-      this.send({
-        getInstanceCountsStatsWarnings: { path: mod.path, correlationId: mod.path },
-      });
     }
-  }
-
-  /** Webswing's own numbers for one app path, or null if none have arrived. */
-  statsFor(applicationPath: string): WebswingStats | null {
-    return this.statsByPath.get(applicationPath) ?? null;
-  }
-
-  /** Every app path we currently hold stats for. */
-  statPaths(): string[] {
-    return [...this.statsByPath.keys()];
   }
 
   /** Wait briefly for `getServerInfo` to land, then hand back the pool ids. */
@@ -385,38 +380,6 @@ class AdminConsoleClient {
       return;
     }
 
-    const stats = msg.instanceCountsStatsWarnings as
-      | {
-          runningCount?: number;
-          connectedCount?: number;
-          summaryStats?: { metric?: string; stats?: { key?: string; value?: number }[] }[];
-          summaryWarnings?: { instanceId?: string; warnings?: string[] }[];
-          correlationId?: string;
-        }
-      | undefined;
-    if (stats) {
-      const key = stats.correlationId ?? String(msg.path ?? "");
-      const metrics: Record<string, number> = {};
-      for (const entry of stats.summaryStats ?? []) {
-        // Each metric carries a short history; the last point is the current one.
-        const points = entry.stats ?? [];
-        const latest = points[points.length - 1];
-        if (entry.metric && latest && typeof latest.value === "number") {
-          metrics[entry.metric] = latest.value;
-        }
-      }
-      const warnings = (stats.summaryWarnings ?? []).flatMap((w) =>
-        (w.warnings ?? []).map((t) => (w.instanceId ? `${w.instanceId}: ${t}` : t)),
-      );
-      this.statsByPath.set(key, {
-        metrics,
-        warnings,
-        running: Number(stats.runningCount ?? 0),
-        connected: Number(stats.connectedCount ?? 0),
-      });
-      return;
-    }
-
     const swingSessions = msg.swingSessions as
       | { runningSessions?: unknown[]; correlationId?: string }
       | undefined;
@@ -437,15 +400,18 @@ class AdminConsoleClient {
           typeof s.disconnectedSince === "number" && s.disconnectedSince > 0
             ? s.disconnectedSince
             : null,
+        metrics: metricsOf(s.metrics),
+        warnings: Array.isArray(s.warnings) ? s.warnings.map(String) : [],
+        statisticsLoggingEnabled: Boolean(s.statisticsLoggingEnabled),
       } satisfies WebswingSession;
     });
 
-    // Statistics are opt-in per instance: the metrics exist, but the app only
-    // records them once told to. Ask once per instance — the toggle is an
-    // event, not a subscription, so a fresh JVM needs its own.
+    // Statistics are opt-in per instance. Drive it off what the session
+    // actually reports rather than off a local "we sent it once" set: the
+    // toggle is an event to the app, the app reports the resulting state back
+    // in `statisticsLoggingEnabled`, and only that round trip proves it took.
     for (const s of running) {
-      if (s.instanceId && !this.statsEnabled.has(s.instanceId)) {
-        this.statsEnabled.add(s.instanceId);
+      if (s.instanceId && !s.statisticsLoggingEnabled) {
         this.send({
           toggleStatisticsLogging: {
             path: s.applicationPath,
@@ -453,13 +419,6 @@ class AdminConsoleClient {
             enabled: true,
           },
         });
-      }
-    }
-    // Forget instances that are gone, so a recycled id is re-enabled.
-    const live = new Set(running.map((s) => s.instanceId));
-    for (const id of this.statsEnabled) {
-      if (!live.has(id) && this.byPath.get(key)?.some((s) => s.instanceId === id)) {
-        this.statsEnabled.delete(id);
       }
     }
 
