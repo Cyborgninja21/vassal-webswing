@@ -55,7 +55,8 @@ RUN mkdir -p /opt/vassal/modules && cd /opt/vassal/modules \
     done < /build/modules.list
 
 # Patch the war: AudioClip.getFormat() fix (DataLine contract) spliced into the
-# toolkit jar, and compile the X-Forwarded-User realm into an ext jar.
+# toolkit jar, the directdraw image-memo adapter spliced into the app-services
+# jar, and compile the X-Forwarded-User realm into an ext jar.
 COPY src /build/src
 COPY patches /build/patches
 RUN set -e; \
@@ -66,6 +67,9 @@ RUN set -e; \
     unzip -q -j "$WAR" \
       "WEB-INF/lib/webswing-app-toolkit-${WEBSWING_VERSION}.jar" \
       "WEB-INF/lib/webswing-server-common-${WEBSWING_VERSION}.jar" \
+      "WEB-INF/lib/webswing-app-services.jar" \
+      "WEB-INF/lib/webswing-directdraw-swing-${WEBSWING_VERSION}.jar" \
+      "WEB-INF/lib/lz4-java-*.jar" \
       "WEB-INF/lib/jetty-servlet-api-4.0.9.jar" \
       "WEB-INF/lib/slf4j-api-2.0.18.jar" \
       -d cp; \
@@ -76,9 +80,14 @@ RUN set -e; \
           --add-exports java.desktop/sun.font=ALL-UNNAMED \
           -cp "cp/*" -d out/audio patches/AudioClip.java; \
     cd out/audio && jar uf /build/cp/webswing-app-toolkit-${WEBSWING_VERSION}.jar org/webswing/audio/*.class && cd /build; \
+    # 1b. directdraw image-memo adapter -> app-services jar (see the patch
+    #     header: ImageConst re-encodes + re-hashes every image on every
+    #     drawImage; VASSAL redraws the same immutable tiles every frame)
+    javac -cp "cp/*" -d out/ddmemo patches/FastDirectDrawServicesAdapter.java; \
+    cd out/ddmemo && jar uf /build/cp/webswing-app-services.jar org/webswing/services/impl/ddutil/*.class && cd /build; \
     mkdir -p warpatch/WEB-INF/lib; \
-    cp cp/webswing-app-toolkit-${WEBSWING_VERSION}.jar warpatch/WEB-INF/lib/; \
-    cd warpatch && jar uf "$WAR" WEB-INF/lib/webswing-app-toolkit-${WEBSWING_VERSION}.jar && cd /build; \
+    cp cp/webswing-app-toolkit-${WEBSWING_VERSION}.jar cp/webswing-app-services.jar warpatch/WEB-INF/lib/; \
+    cd warpatch && jar uf "$WAR" WEB-INF/lib/webswing-app-toolkit-${WEBSWING_VERSION}.jar WEB-INF/lib/webswing-app-services.jar && cd /build; \
     # 2. X-Forwarded-User realm -> ext jar
     javac -cp "cp/*" -d out/sec $(find src -name '*.java'); \
     mkdir -p $WS/ext; \

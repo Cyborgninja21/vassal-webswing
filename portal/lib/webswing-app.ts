@@ -68,14 +68,13 @@ function swingConfigForFile(moduleFilePath: string, heap: string): Record<string
     classPathEntries: ["/opt/vassal/lib/Vengine.jar"],
     jreExecutable: "/opt/vassal/bin/vassal-java",
     homeDir: "/data/users/${user}",
-    // Off deliberately. Directdraw identifies every image an app draws by
-    // xxhashing its pixels (Webswing hardcodes the slowest pure-Java hash) and
-    // PNG-encodes cache misses — per image, per frame, on the EDT. VASSAL's
-    // map paint is dozens of tile drawImages per repaint, and mid-drag thread
-    // dumps show the EDT pinned exactly there: ~10 fps under drag, ~80 ms of
-    // every 95 ms cycle in hash/encode. Buffer mode renders plain Java2D and
-    // ships dirty-region PNG diffs instead, trading bandwidth for frame rate.
-    directdraw: false,
+    // Directdraw is the only mode that works here: buffer mode dies at first
+    // paint with "No SurfaceManagerFactory set" (Swing's CachedPainter wants a
+    // VolatileImage that Webswing's headless toolkit cannot back on Java 21).
+    // Its per-image hash+encode cost — the EDT pinned at ~10 fps under drag —
+    // is fixed in the engine instead: patches/FastDirectDrawServicesAdapter
+    // memoizes {png, hash} per immutable image.
+    directdraw: true,
     isolatedFs: true,
     transferDir: "/data/transfers/${user}",
     allowUpload: true,
