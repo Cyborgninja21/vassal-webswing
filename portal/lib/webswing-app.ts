@@ -56,7 +56,14 @@ export function swingConfigFor(m: ModuleManifest): Record<string, unknown> {
     },
     vmArgs:
       `-Xmx${m.heap} -Duser.home=/data/users/\${user} ` +
-      `-Dwebswing.trustedFontDirs=/usr/share/fonts`,
+      `-Dwebswing.trustedFontDirs=/usr/share/fonts ` +
+      // Webswing's paint loop is ack-gated — it builds a frame, marks the
+      // client not-ready and refuses to build another until the browser acks
+      // — and only wakes on this tick. At the 33 ms default that is up to
+      // 33 ms of dead time per frame on a server measured at 1 % CPU with an
+      // unblocked EDT, which is pure latency for no gain. 10 ms keeps the
+      // batching that makes directdraw cheap while cutting the wait.
+      `-Dwebswing.drawDelayMs=10`,
     classPathEntries: ["/opt/vassal/lib/Vengine.jar"],
     jreExecutable: "/opt/vassal/bin/vassal-java",
     homeDir: "/data/users/${user}",
