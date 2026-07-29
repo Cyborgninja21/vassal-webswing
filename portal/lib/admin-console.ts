@@ -52,6 +52,14 @@ export type WebswingSession = {
   /** Warnings Webswing raised itself (latency > 700 ms, EDT blocked > 10 s…). */
   warnings: string[];
   statisticsLoggingEnabled: boolean;
+  /**
+   * Thread dumps the instance has produced, content withheld — Webswing lists
+   * only {timestamp, reason} on the session and hands the text over per-dump
+   * via `getThreadDump`. Signals are no use here (app JVMs run with reduced
+   * signal handling; SIGQUIT kills the process instead of dumping it), so this
+   * channel is the only way to see inside a live seat.
+   */
+  threadDumps: { timestamp: number; reason: string }[];
 };
 
 export type AdminConsoleState = {
@@ -99,6 +107,8 @@ class AdminConsoleClient {
   private listeners = new Set<Listener>();
   /** correlationId → resolver, for the request/response half of saveConfig. */
   private pendingSaves = new Map<string, (r: { ok: boolean; error: string | null }) => void>();
+  /** correlationId → resolver, for the request/response half of getThreadDump. */
+  private pendingDumps = new Map<string, (content: string | null) => void>();
   /**
    * Session-pool ids, from `getServerInfo`.
    *
@@ -380,6 +390,18 @@ class AdminConsoleClient {
       return;
     }
 
+    const threadDump = msg.threadDump as
+      | { content?: string; correlationId?: string }
+      | undefined;
+    if (threadDump?.correlationId) {
+      const resolve = this.pendingDumps.get(threadDump.correlationId);
+      if (resolve) {
+        this.pendingDumps.delete(threadDump.correlationId);
+        resolve(typeof threadDump.content === "string" && threadDump.content ? threadDump.content : null);
+      }
+      return;
+    }
+
     const swingSessions = msg.swingSessions as
       | { runningSessions?: unknown[]; correlationId?: string }
       | undefined;
@@ -403,6 +425,15 @@ class AdminConsoleClient {
         metrics: metricsOf(s.metrics),
         warnings: Array.isArray(s.warnings) ? s.warnings.map(String) : [],
         statisticsLoggingEnabled: Boolean(s.statisticsLoggingEnabled),
+        threadDumps: (Array.isArray(s.threadDumps) ? s.threadDumps : [])
+          .map((raw) => {
+            const d = raw as { timestamp?: unknown; reason?: unknown };
+            return {
+              timestamp: typeof d.timestamp === "number" ? d.timestamp : 0,
+              reason: String(d.reason ?? ""),
+            };
+          })
+          .filter((d) => d.timestamp > 0),
       } satisfies WebswingSession;
     });
 
@@ -437,6 +468,50 @@ class AdminConsoleClient {
    * reconnect would otherwise attach to a JVM still pointed at the old table.
    * Webswing's `CONTINUE_FOR_USER` then gives them a fresh JVM on next open.
    */
+  /**
+   * Ask a Player JVM to produce a thread dump of itself.
+   *
+   * Fire-and-forget: the dump lands server-side and its {timestamp, reason}
+   * shows up in the session's `threadDumps` on a later poll (the app needs a
+   * beat to write it). Fetch the text with `fetchThreadDump`.
+   */
+  requestThreadDump(applicationPath: string, instanceId: string): boolean {
+    if (this.ws?.readyState !== WebSocket.OPEN) return false;
+    this.send({ requestThreadDump: { path: applicationPath, instanceId } });
+    return true;
+  }
+
+  /** Retrieve one dump's text by the timestamp `threadDumps` listed for it. */
+  async fetchThreadDump(
+    applicationPath: string,
+    instanceId: string,
+    timestamp: number,
+  ): Promise<string | null> {
+    if (this.ws?.readyState !== WebSocket.OPEN) return null;
+    const correlationId = randomUUID();
+    const result = new Promise<string | null>((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingDumps.delete(correlationId);
+        resolve(null);
+      }, 15_000);
+      this.pendingDumps.set(correlationId, (content) => {
+        clearTimeout(timer);
+        resolve(content);
+      });
+    });
+    this.send({
+      getThreadDump: {
+        path: applicationPath,
+        instanceId,
+        // GetThreadDump takes the timestamp as a string; the server
+        // Long.parseLongs it to key its dump map.
+        timestamp: String(timestamp),
+        correlationId,
+      },
+    });
+    return result;
+  }
+
   shutdownSession(applicationPath: string, instanceId: string, force = true): boolean {
     if (this.ws?.readyState !== WebSocket.OPEN) return false;
     this.send({ shutdown: { path: applicationPath, instanceId, force } });
