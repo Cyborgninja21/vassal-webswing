@@ -22,13 +22,19 @@ import { sanitizeUsername } from "@/lib/identity";
  *    server by hand — its absence is exactly why players had to go into Server
  *    Controls. Its value is `Properties.store()` text, so it is multi-line and
  *    gets `\n`-escaped when written into V_Global.
- *  - `V_Global` → `PortalRoom`: the room the patched launcher joins after
- *    connecting. Main Room cannot hold a game — VASSAL tears the game state
- *    down when you join the default room and only synchronises for named ones.
  *  - `<module>` → `RealName` / `SecretName`: the identity. `SecretName` is what
  *    VASSAL matches to hand a returning player their seat back, so the portal
  *    issues a stable random one per user (never a real credential — VASSAL
  *    stores it in clear and broadcasts it to the module).
+ *  - `<module>` → `PortalRoom` / `PortalSpectator`: the room the patched
+ *    launcher joins after connecting, and whether this session is watching.
+ *    Main Room cannot hold a game — VASSAL tears the game state down when you
+ *    join the default room and only synchronises for named ones.
+ *
+ *    **Per module, not global.** A player may have several games open at once,
+ *    so a single global slot means opening the second rewrites where the first
+ *    would reconnect to — and if two are opened before either is launched, both
+ *    JVMs join the same room name. Seen live on 2026-07-28.
  *
  * Connecting and joining the room are done by the engine patch this fork
  * carries (patches/Player.java): stock VASSAL 3.7.24 will not connect by itself
@@ -183,28 +189,28 @@ export async function seedPlayerPrefs(req: SeedRequest): Promise<void> {
     global.set("ServerSelected", encodeServerSelected(props));
   }
 
-  // Read once at launch by the patched Player: connect, then join this room.
-  if (req.room) {
-    global.set("PortalRoom", req.room);
-  } else {
-    global.delete("PortalRoom");
-  }
-
-  // Read once at launch by the patched PlayerRoster.
-  if (req.spectator) {
-    global.set("PortalSpectator", "true");
-  } else {
-    global.delete("PortalSpectator");
-  }
+  // Older builds kept these two globally; clear any leftovers so a stale value
+  // cannot outlive the module-scoped ones written below.
+  global.delete("PortalRoom");
+  global.delete("PortalSpectator");
 
   await writeProps(globalFile, global);
 
-  // --- module prefs: the identity VASSAL uses to re-claim a seat ---
+  // --- module prefs: identity, plus where this game is being played ---
   if (req.vassalModuleName) {
     const moduleFile = path.join(dir, sanitizePrefsName(req.vassalModuleName));
     const modulePrefs = await readProps(moduleFile);
     modulePrefs.set("RealName", req.nickname);
     modulePrefs.set("SecretName", req.secretName);
+
+    // Read once at launch by the patched Player: connect, then join this room.
+    if (req.room) modulePrefs.set("PortalRoom", req.room);
+    else modulePrefs.delete("PortalRoom");
+
+    // Read once at launch by the patched PlayerRoster.
+    if (req.spectator) modulePrefs.set("PortalSpectator", "true");
+    else modulePrefs.delete("PortalSpectator");
+
     await writeProps(moduleFile, modulePrefs);
   }
 }

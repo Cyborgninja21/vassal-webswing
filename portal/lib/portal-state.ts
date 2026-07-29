@@ -1,5 +1,6 @@
 import { allModules, findModuleByPath } from "@/lib/catalog";
 import { lobbyStore } from "@/lib/lobby-state";
+import { playersAtTable } from "@/lib/table-presence";
 import { adminConsole } from "@/lib/admin-console";
 import { env } from "@/lib/env";
 import { tableStore } from "@/lib/tables";
@@ -80,9 +81,7 @@ export async function buildPortalState(
   const registry = await tableStore.list();
 
   const playersBySlot = new Map<number, string[]>();
-  for (const room of lobby.rooms) {
-    if (room.table !== null) playersBySlot.set(room.table, room.players);
-  }
+  for (const table of registry) playersBySlot.set(table.slot, playersAtTable(table));
 
   const usersByPath = new Map<string, Set<string>>();
   for (const session of admin.sessions ?? []) {

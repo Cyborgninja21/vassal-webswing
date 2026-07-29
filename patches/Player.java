@@ -164,7 +164,15 @@ public class Player extends Launcher {
     autoSeat(module);
   }
 
-  /** Global preference holding the room the portal seated this player at. */
+  /**
+   * Preference holding the room the portal seated this player at.
+   *
+   * Stored in the MODULE's preferences, not the global ones. A player may have
+   * several games open at once — the portal caps it, it does not forbid it —
+   * and one global slot means opening the second game rewrites where the first
+   * one would reconnect to. Observed on 2026-07-28: two tables opened before
+   * either was launched, and both JVMs joined the room named for the second.
+   */
   private static final String PORTAL_ROOM_PREF = "PortalRoom"; //NON-NLS
 
   /** How long to wait for the room list before giving up and creating the room. */
@@ -185,7 +193,7 @@ public class Player extends Launcher {
    * who would silently arrive at an empty board.
    */
   private void autoSeat(GameModule module) {
-    final String room = Prefs.getGlobalPrefs().getStoredValue(PORTAL_ROOM_PREF);
+    final String room = module.getPrefs().getStoredValue(PORTAL_ROOM_PREF);
     if (room == null || room.trim().isEmpty()) {
       return;
     }
