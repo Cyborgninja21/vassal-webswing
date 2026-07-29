@@ -34,16 +34,19 @@ RUN curl -fsSL -o vassal.tar.bz2 \
 # cannot be done from outside the engine:
 #   Player.java       — connect and join the room the portal chose
 #   PlayerRoster.java — spectators take <observer> without being asked
-COPY patches/Player.java patches/PlayerRoster.java /build/patches/
+#   DataArchive.java  — cache negative class lookups (module load time)
+COPY patches/Player.java patches/PlayerRoster.java patches/DataArchive.java /build/patches/
 RUN set -e; \
     LIB=/build/VASSAL-${VASSAL_VERSION}/lib; \
     mkdir -p /build/out/vassal; \
     javac -nowarn -cp "$LIB/*" -d /build/out/vassal \
-      /build/patches/Player.java /build/patches/PlayerRoster.java; \
+      /build/patches/Player.java /build/patches/PlayerRoster.java /build/patches/DataArchive.java; \
     test -f /build/out/vassal/VASSAL/launch/Player.class; \
     test -f /build/out/vassal/VASSAL/build/module/PlayerRoster.class; \
+    test -f /build/out/vassal/VASSAL/tools/DataArchive.class; \
     (cd /build/out/vassal && jar uf "$LIB/Vengine.jar" \
-       VASSAL/launch/Player*.class VASSAL/build/module/PlayerRoster*.class)
+       VASSAL/launch/Player*.class VASSAL/build/module/PlayerRoster*.class \
+       VASSAL/tools/DataArchive*.class)
 
 # Game modules (from the VASSAL module library; per-module sha256 pins)
 COPY docker/modules.list /build/modules.list
