@@ -47,27 +47,35 @@ export function pathConfigFor(m: ModuleManifest): Record<string, unknown> {
  * authenticated username; it must survive into the JSON verbatim.
  */
 export function swingConfigFor(m: ModuleManifest): Record<string, unknown> {
-  const modulePath = path.posix.join(env.modulesDir, m.slug, m.moduleFile);
+  return swingConfigForFile(path.posix.join(env.modulesDir, m.slug, m.moduleFile), m.heap);
+}
+
+function swingConfigForFile(moduleFilePath: string, heap: string): Record<string, unknown> {
   return {
     launcherType: "Desktop",
     launcherConfig: {
       mainClass: "VASSAL.launch.Player",
-      args: `--load ${quoteArg(modulePath)}`,
+      args: `--load ${quoteArg(moduleFilePath)}`,
     },
     vmArgs:
-      `-Xmx${m.heap} -Duser.home=/data/users/\${user} ` +
+      `-Xmx${heap} -Duser.home=/data/users/\${user} ` +
       `-Dwebswing.trustedFontDirs=/usr/share/fonts ` +
       // Webswing's paint loop is ack-gated — it builds a frame, marks the
       // client not-ready and refuses to build another until the browser acks
       // — and only wakes on this tick. At the 33 ms default that is up to
-      // 33 ms of dead time per frame on a server measured at 1 % CPU with an
-      // unblocked EDT, which is pure latency for no gain. 10 ms keeps the
-      // batching that makes directdraw cheap while cutting the wait.
+      // 33 ms of dead time per frame, which is pure latency for no gain.
       `-Dwebswing.drawDelayMs=10`,
     classPathEntries: ["/opt/vassal/lib/Vengine.jar"],
     jreExecutable: "/opt/vassal/bin/vassal-java",
     homeDir: "/data/users/${user}",
-    directdraw: true,
+    // Off deliberately. Directdraw identifies every image an app draws by
+    // xxhashing its pixels (Webswing hardcodes the slowest pure-Java hash) and
+    // PNG-encodes cache misses — per image, per frame, on the EDT. VASSAL's
+    // map paint is dozens of tile drawImages per repaint, and mid-drag thread
+    // dumps show the EDT pinned exactly there: ~10 fps under drag, ~80 ms of
+    // every 95 ms cycle in hash/encode. Buffer mode renders plain Java2D and
+    // ships dirty-region PNG diffs instead, trading bandwidth for frame rate.
+    directdraw: false,
     isolatedFs: true,
     transferDir: "/data/transfers/${user}",
     allowUpload: true,
@@ -85,6 +93,39 @@ export function swingConfigFor(m: ModuleManifest): Record<string, unknown> {
     },
   };
 }
+
+/**
+ * The three curated modules baked into the image.
+ *
+ * `docker/webswing.config` only SEEDS the live config — the entrypoint copies
+ * it exactly once, so on every existing deployment edits to it are dead
+ * letters (proven when a vmArgs change shipped and never reached `/his`).
+ * Reconciling the built-ins through the same admin channel as ingested
+ * modules makes the portal the durable owner of their configuration too.
+ */
+const BUILTIN_APPS = [
+  {
+    path: "/his",
+    name: "Here I Stand (500th)",
+    icon: "/opt/webswing/icons/his.png",
+    maxClients: 8,
+    moduleFile: "/opt/vassal/modules/Here_I_Stand_500th_3.5.0.vmod",
+  },
+  {
+    path: "/twilight-struggle",
+    name: "Twilight Struggle (Deluxe)",
+    icon: "/opt/webswing/icons/twilight-struggle.png",
+    maxClients: 4,
+    moduleFile: "/opt/vassal/modules/Twilight-Struggle-3.2.vmod",
+  },
+  {
+    path: "/paths-of-glory",
+    name: "Paths of Glory",
+    icon: "/opt/webswing/icons/paths-of-glory.png",
+    maxClients: 4,
+    moduleFile: "/opt/vassal/modules/Paths_of_Glory_10.8.vmod",
+  },
+] as const;
 
 export type PublishResult = { ok: boolean; error: string | null };
 
@@ -110,6 +151,25 @@ export async function unpublishModule(m: ModuleManifest): Promise<PublishResult>
  * and removes a whole class of "the tile is there but the URL 404s".
  */
 export async function reconcilePublishedModules(): Promise<void> {
+  for (const app of BUILTIN_APPS) {
+    const result = await adminConsole.publishApp(
+      app.path,
+      {
+        path: app.path,
+        name: app.name,
+        icon: app.icon,
+        enabled: true,
+        maxClients: app.maxClients,
+        sessionMode: "CONTINUE_FOR_USER",
+        allowStealSession: false,
+      },
+      swingConfigForFile(app.moduleFile, "2g"),
+      { create: false },
+    );
+    if (!result.ok) {
+      console.warn(`vassal_portal builtin publish failed path=${app.path} error=${result.error}`);
+    }
+  }
   const modules = moduleRegistry.snapshot();
   for (const m of modules) {
     if (!m.enabled) continue;
