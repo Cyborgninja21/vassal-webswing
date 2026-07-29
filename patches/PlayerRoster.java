@@ -854,14 +854,21 @@ public class PlayerRoster extends AbstractToolbarItem implements CommandEncoder,
   }
 
   /**
-   * Global preference set by vassal-portal when it opens a session to watch a
-   * game rather than play in it.
+   * Preference set by vassal-portal when it opens a session to watch a game
+   * rather than play in it.
+   *
+   * Stored in the MODULE's preferences, not the global ones: a player can have
+   * several games open at once, and watching one of them must not turn the
+   * others into observers. (It was global until 2026-07-28, when unbounded
+   * tables made "several games at once" a normal thing to do.)
    */
   private static final String PORTAL_SPECTATOR_PREF = "PortalSpectator"; //NON-NLS
 
   /** vassal-webswing patch: is this session here to watch? */
   private static boolean isPortalSpectator() {
-    return "true".equals(Prefs.getGlobalPrefs().getStoredValue(PORTAL_SPECTATOR_PREF)); //NON-NLS
+    final GameModule g = GameModule.getGameModule();
+    final Prefs prefs = g == null ? Prefs.getGlobalPrefs() : g.getPrefs();
+    return "true".equals(prefs.getStoredValue(PORTAL_SPECTATOR_PREF)); //NON-NLS
   }
 
   protected String promptForSide(String newSide) {

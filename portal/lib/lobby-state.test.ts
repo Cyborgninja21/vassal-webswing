@@ -106,3 +106,34 @@ describe("lobby store", () => {
     expect(store.playersAt(2)).toEqual(["Jordan"]);
   });
 });
+
+describe("table attribution", () => {
+  // Regression: rooms are namespaced per module, so the same `(#n)` can exist
+  // under two modules at once. Found live 2026-07-28 — one player opened two
+  // tables before launching either, both JVMs read the same room name, and the
+  // portal merged two different games into one table row.
+  async function withRooms(...lines: string[]) {
+    delete (globalThis as Record<string, unknown>).__vassalLobbyStore;
+    vi.resetModules();
+    const { lobbyStore } = await import("@/lib/lobby-state");
+    const { playersAtTable } = await import("@/lib/table-presence");
+    lobbyStore.update(parseStatus(lines.join("\n") + "\n"));
+    return playersAtTable;
+  }
+
+  it("does not hand one module's room to another module's table", async () => {
+    const playersAtTable = await withRooms(
+      "Here I Stand (500th Anniversary Edition)\tclash (#2)\tChase",
+      "Twilight Struggle 3.1\tclash (#2)\tJordan",
+    );
+    expect(playersAtTable({ slot: 2, modulePath: "/his" })).toEqual(["Chase"]);
+    expect(playersAtTable({ slot: 2, modulePath: "/twilight-struggle" })).toEqual([
+      "Jordan",
+    ]);
+  });
+
+  it("keeps a room whose module is not in the catalog rather than hiding it", async () => {
+    const playersAtTable = await withRooms("Some Unlisted Module\tgame (#4)\tSam");
+    expect(playersAtTable({ slot: 4, modulePath: "/whatever" })).toEqual(["Sam"]);
+  });
+});

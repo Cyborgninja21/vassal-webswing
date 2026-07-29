@@ -1,6 +1,6 @@
 import { adminConsole } from "@/lib/admin-console";
 import { findModuleByPath } from "@/lib/catalog";
-import { lobbyStore } from "@/lib/lobby-state";
+import { playersAtTable } from "@/lib/table-presence";
 import { seedPlayerPrefs, type TableServer } from "@/lib/vassal-prefs";
 import { env } from "@/lib/env";
 import { roomNameFor, tableStore, type Table } from "@/lib/tables";
@@ -49,7 +49,7 @@ export async function checkSeatingAllowed(
   spectator: boolean,
 ): Promise<string | null> {
   const identity = await tableStore.identity(username);
-  const present = lobbyStore.playersAt(table.slot);
+  const present = playersAtTable(table);
   const alreadyHere = present.includes(identity.nickname);
 
   // Someone already at the table is always allowed back — that is a reconnect.
@@ -135,7 +135,7 @@ export async function seatPlayer(
   // A spectator switching in (or a player switching to watching) must always
   // get a fresh JVM: the side is decided once, at startup.
   const alreadySeated =
-    !spectator && lobbyStore.playersAt(table.slot).includes(identity.nickname);
+    !spectator && playersAtTable(table).includes(identity.nickname);
 
   let restarted = false;
   if (!alreadySeated) {
