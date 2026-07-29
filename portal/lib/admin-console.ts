@@ -39,6 +39,28 @@ export type WebswingSession = {
   disconnectedSince: number | null;
 };
 
+/**
+ * Webswing's own per-application performance numbers.
+ *
+ * It has always measured these — `DefaultStatisticsLogger` aggregates them
+ * every `webswing.stats.interval` (10 s) with warning thresholds at 700 ms
+ * latency and 10 s of blocked EDT — but nothing was asking for them, so the
+ * only view of "why does it feel slow" was guesswork from outside.
+ *
+ * The split is what makes it useful: `latencyServerRendering` (Swing repaint +
+ * encode), `latencyNetworkTransfer` (the wire) and `latencyClientRendering`
+ * (the browser) add up to `latency`, so a slow session says *which part* is
+ * slow instead of just being slow.
+ */
+export type WebswingStats = {
+  /** Metric name → most recent aggregated value. Units are ms except sizes. */
+  metrics: Record<string, number>;
+  /** Warnings Webswing raised itself, e.g. latency over threshold. */
+  warnings: string[];
+  running: number;
+  connected: number;
+};
+
 export type AdminConsoleState = {
   /** null until the first successful poll; distinguishes "empty" from "unknown". */
   sessions: WebswingSession[] | null;
@@ -64,6 +86,8 @@ class AdminConsoleClient {
   private backoff = BACKOFF_MIN_MS;
   private started = false;
   private byPath = new Map<string, WebswingSession[]>();
+  /** app path → Webswing's own latency/EDT/bandwidth numbers for that app. */
+  private statsByPath = new Map<string, WebswingStats>();
   private listeners = new Set<Listener>();
   /** correlationId → resolver, for the request/response half of saveConfig. */
   private pendingSaves = new Map<string, (r: { ok: boolean; error: string | null }) => void>();
@@ -202,7 +226,21 @@ class AdminConsoleClient {
   private poll(): void {
     for (const mod of allModules()) {
       this.send({ getSwingSessions: { path: mod.path, correlationId: mod.path } });
+      // Same round trip, second question: how is that app actually performing?
+      this.send({
+        getInstanceCountsStatsWarnings: { path: mod.path, correlationId: mod.path },
+      });
     }
+  }
+
+  /** Webswing's own numbers for one app path, or null if none have arrived. */
+  statsFor(applicationPath: string): WebswingStats | null {
+    return this.statsByPath.get(applicationPath) ?? null;
+  }
+
+  /** Every app path we currently hold stats for. */
+  statPaths(): string[] {
+    return [...this.statsByPath.keys()];
   }
 
   /** Wait briefly for `getServerInfo` to land, then hand back the pool ids. */
@@ -342,6 +380,38 @@ class AdminConsoleClient {
           error: saveResult.serverError ? String(saveResult.serverError).split("\n")[0] : null,
         });
       }
+      return;
+    }
+
+    const stats = msg.instanceCountsStatsWarnings as
+      | {
+          runningCount?: number;
+          connectedCount?: number;
+          summaryStats?: { metric?: string; stats?: { key?: string; value?: number }[] }[];
+          summaryWarnings?: { instanceId?: string; warnings?: string[] }[];
+          correlationId?: string;
+        }
+      | undefined;
+    if (stats) {
+      const key = stats.correlationId ?? String(msg.path ?? "");
+      const metrics: Record<string, number> = {};
+      for (const entry of stats.summaryStats ?? []) {
+        // Each metric carries a short history; the last point is the current one.
+        const points = entry.stats ?? [];
+        const latest = points[points.length - 1];
+        if (entry.metric && latest && typeof latest.value === "number") {
+          metrics[entry.metric] = latest.value;
+        }
+      }
+      const warnings = (stats.summaryWarnings ?? []).flatMap((w) =>
+        (w.warnings ?? []).map((t) => (w.instanceId ? `${w.instanceId}: ${t}` : t)),
+      );
+      this.statsByPath.set(key, {
+        metrics,
+        warnings,
+        running: Number(stats.runningCount ?? 0),
+        connected: Number(stats.connectedCount ?? 0),
+      });
       return;
     }
 

@@ -106,7 +106,13 @@ export async function reconcilePublishedModules(): Promise<void> {
   const modules = moduleRegistry.snapshot();
   for (const m of modules) {
     if (!m.enabled) continue;
-    const result = await publishModule(m);
+    // `create: false` on reconcile. The app path normally already exists — the
+    // config file survives a recreate — and asking Webswing to create it again
+    // makes it log `ERROR ... Unable to Create App. Application already exits.`
+    // on every single boot. saveConfig alone is enough to (re)write the entry,
+    // so the only thing createApp bought here was a permanent false alarm in
+    // the errors panel. Ingest still creates: that path is a genuinely new app.
+    const result = await publishModule(m, { create: false });
     if (!result.ok) {
       console.warn(`vassal_portal module publish failed slug=${m.slug} error=${result.error}`);
     }
