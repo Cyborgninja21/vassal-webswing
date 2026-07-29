@@ -7,7 +7,7 @@
 # ── Stage 1: assemble + patch ────────────────────────────────────────────────
 FROM eclipse-temurin:21-jdk-noble AS build
 
-RUN apt-get update && apt-get install -y --no-install-recommends curl bzip2 unzip \
+RUN apt-get update && apt-get install -y --no-install-recommends curl bzip2 unzip brotli \
  && rm -rf /var/lib/apt/lists/*
 
 ARG WEBSWING_VERSION=26.4.5
@@ -94,7 +94,22 @@ RUN set -e; \
     (cd out/sec && jar cf $WS/ext/vassal-webswing-security.jar org); \
     # 3. modpatch jar at rootDir for resolveJdkPatchJar()
     cd /build && unzip -q -j "$WAR" "WEB-INF/lib/modpatch-java-desktop-${WEBSWING_VERSION}.jar" -d mp \
- && cp mp/modpatch-java-desktop-${WEBSWING_VERSION}.jar $WS/modpatch-java.desktop.jar
+ && cp mp/modpatch-java-desktop-${WEBSWING_VERSION}.jar $WS/modpatch-java.desktop.jar; \
+    # 4. input flush interval 100 ms -> 20 ms, in the browser bundle.
+    #    The client only LATCHES mousemove/wheel (handleMouseMove stores
+    #    latestMouseMoveEvent); a hardcoded setInterval flushes the queue every
+    #    100 ms, so the server hears at most 10 moves a second — the measured
+    #    ~10 fps drag ceiling and ~140 ms wheel latency, invariant to viewport,
+    #    CPU and drawDelayMs, with the EDT idle mid-drag. 20 ms lifts the input
+    #    rate to 50/s; the ack-gated paint loop still coalesces under load.
+    #    Jetty serves the precompressed siblings first, so regenerate them too.
+    cd /build && mkdir -p warjs && unzip -q "$WAR" "javascript/webswing-embed.js" -d warjs; \
+    test "$(grep -c 'this.api.sendInput(), 100)' warjs/javascript/webswing-embed.js)" = "1"; \
+    sed -i 's/this.api.sendInput(), 100)/this.api.sendInput(), 20)/' warjs/javascript/webswing-embed.js; \
+    test "$(grep -c 'this.api.sendInput(), 20)' warjs/javascript/webswing-embed.js)" = "1"; \
+    gzip -9 -k -f warjs/javascript/webswing-embed.js; \
+    brotli -f -q 11 -o warjs/javascript/webswing-embed.js.br warjs/javascript/webswing-embed.js; \
+    cd warjs && jar uf "$WAR" javascript/webswing-embed.js javascript/webswing-embed.js.gz javascript/webswing-embed.js.br
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
 FROM eclipse-temurin:21-jre-noble
